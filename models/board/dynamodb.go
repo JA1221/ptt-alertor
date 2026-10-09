@@ -5,7 +5,7 @@ import (
 
 	log "github.com/Ptt-Alertor/logrus"
 	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/Ptt-Alertor/ptt-alertor/connections"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
 
 	"github.com/Ptt-Alertor/ptt-alertor/models/article"
@@ -19,7 +19,7 @@ type DynamoDB struct {
 }
 
 func (DynamoDB) GetArticles(boardName string) (articles article.Articles) {
-	dynamo := dynamodb.New(session.New())
+	dynamo := connections.DynamoDB()
 	result, err := dynamo.GetItem(&dynamodb.GetItemInput{
 		TableName: aws.String(tableName),
 		Key: map[string]*dynamodb.AttributeValue{
@@ -56,7 +56,7 @@ func (DynamoDB) Save(boardName string, articles article.Articles) error {
 		return err
 	}
 
-	dynamo := dynamodb.New(session.New())
+	dynamo := connections.DynamoDB()
 	_, err = dynamo.PutItem(&dynamodb.PutItemInput{
 		Item: map[string]*dynamodb.AttributeValue{
 			"Board": {
@@ -76,7 +76,7 @@ func (DynamoDB) Save(boardName string, articles article.Articles) error {
 }
 
 func (DynamoDB) Delete(boardName string) error {
-	dynamo := dynamodb.New(session.New())
+	dynamo := connections.DynamoDB()
 	_, err := dynamo.DeleteItem(&dynamodb.DeleteItemInput{
 		Key: map[string]*dynamodb.AttributeValue{
 			"Board": {

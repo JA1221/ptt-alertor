@@ -8,20 +8,23 @@ ENV CGO_ENABLED=0
 
 WORKDIR $GO_WORKDIR
 
+# cache modules
+COPY go.mod go.sum $GO_WORKDIR
+RUN go mod download
+
 ADD . $GO_WORKDIR
 
-RUN go get
 RUN go install
 
 # building executable image
-FROM alpine:latest
+FROM alpine:3.20
 
 RUN set -eux; \
-	apk add --no-cache --virtual ca-certificates
+	apk add --no-cache ca-certificates tzdata
 
 COPY public/ public/
 COPY --from=builder /go/bin/ptt-alertor .
 
-ENTRYPOINT /ptt-alertor
+ENTRYPOINT ["/ptt-alertor"]
 
 EXPOSE 9090 6060

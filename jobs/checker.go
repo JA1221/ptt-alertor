@@ -20,12 +20,19 @@ import (
 
 const checkHighBoardDuration = 1 * time.Second
 
+// minBoardsCheckCycle avoids polling ptt.cc too often when there are few boards
+const minBoardsCheckCycle = 10 * time.Second
+
 var boardCh = make(chan *board.Board, 700)
 var highBoards []*board.Board
 var highBoardNames = strings.Split(os.Getenv("BOARD_HIGH"), ",")
 
 func init() {
 	for _, name := range highBoardNames {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
 		bd := models.Board()
 		bd.Name = name
 		highBoards = append(highBoards, bd)
@@ -34,6 +41,10 @@ func init() {
 
 var cker *Checker
 var ckerOnce sync.Once
+
+// checkingBoards keeps boards being checked, overlapped checks of the same board
+// (e.g. slow responses from ptt.cc) read the same saved articles and send duplicate messages
+var checkingBoards sync.Map
 
 type Checker struct {
 	board    string
@@ -117,7 +128,11 @@ func (c Checker) Run() {
 					offPeak = op
 				}
 			default:
+				start := time.Now()
 				checkBoards(models.Board().All(), duration)
+				if elapsed := time.Since(start); elapsed < minBoardsCheckCycle {
+					time.Sleep(minBoardsCheckCycle - elapsed)
+				}
 			}
 		}
 	}()
@@ -169,6 +184,11 @@ func (c Checker) Stop() {
 }
 
 func checkBoards(bds []*board.Board, duration time.Duration) {
+	// avoid busy loop when there is no board
+	if len(bds) == 0 {
+		time.Sleep(duration)
+		return
+	}
 	for _, bd := range bds {
 		time.Sleep(duration)
 		go checkNewArticle(bd, boardCh)
@@ -176,6 +196,10 @@ func checkBoards(bds []*board.Board, duration time.Duration) {
 }
 
 func checkNewArticle(bd *board.Board, boardCh chan *board.Board) {
+	if _, checking := checkingBoards.LoadOrStore(bd.Name, true); checking {
+		return
+	}
+	defer checkingBoards.Delete(bd.Name)
 	bd.WithNewArticles()
 	if bd.NewArticles == nil && len(bd.OnlineArticles) > 0 {
 		bd.Articles = bd.OnlineArticles

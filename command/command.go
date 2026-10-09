@@ -77,7 +77,11 @@ var commandActionMap = map[string]updateAction{
 
 // HandleCommand handles command from chatbot
 func HandleCommand(text string, userID string, isUser bool) string {
-	command := strings.ToLower(strings.Fields(strings.TrimSpace(text))[0])
+	fields := strings.Fields(text)
+	if len(fields) == 0 {
+		return stringCommands()
+	}
+	command := strings.ToLower(fields[0])
 	if isUser {
 		log.WithFields(log.Fields{
 			"account": userID,

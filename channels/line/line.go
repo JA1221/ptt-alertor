@@ -28,13 +28,21 @@ var (
 )
 
 func init() {
+	if channelSecret == "" || channelAccessToken == "" {
+		log.Warn("LINE_CHANNEL_SECRET Or LINE_CHANNEL_ACCESSTOKEN Is Empty, LINE Bot Disabled")
+		return
+	}
 	bot, err = linebot.New(channelSecret, channelAccessToken)
 	if err != nil {
 		log.Fatal(err)
 	}
 }
 
-func HandleRequest(_ http.ResponseWriter, r *http.Request, _ httprouter.Params) {
+func HandleRequest(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
+	if bot == nil {
+		http.Error(w, "LINE Bot Disabled", http.StatusServiceUnavailable)
+		return
+	}
 	events, err := bot.ParseRequest(r)
 	if err != nil {
 		log.WithError(err).Error("Line ParseRequest Error")
@@ -172,6 +180,10 @@ func getAccountIDAndType(event *linebot.Event) (id, accountType string) {
 }
 
 func PushTextMessage(id string, message string) {
+	if bot == nil {
+		log.Warn("LINE Bot Disabled, Message Not Sent")
+		return
+	}
 	_, err := bot.PushMessage(id, linebot.NewTextMessage(message)).Do()
 	if err != nil {
 		log.WithError(err).Error("Line Push Message Failed")
@@ -199,6 +211,10 @@ func replyMessage(token string, message ...linebot.SendingMessage) {
 }
 
 func BroadcastTextMessage(ids []string, message string) {
+	if bot == nil {
+		log.Warn("LINE Bot Disabled, Message Not Sent")
+		return
+	}
 	_, err := bot.Multicast(ids, linebot.NewTextMessage(message)).Do()
 	if err != nil {
 		log.WithError(err).Error("Line Broadcast Message Failed")

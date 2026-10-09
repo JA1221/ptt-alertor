@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"syscall"
 	"time"
 
 	log "github.com/Ptt-Alertor/logrus"
@@ -15,6 +16,7 @@ import (
 	"github.com/Ptt-Alertor/ptt-alertor/channels/line"
 	"github.com/Ptt-Alertor/ptt-alertor/channels/messenger"
 	"github.com/Ptt-Alertor/ptt-alertor/channels/telegram"
+	"github.com/Ptt-Alertor/ptt-alertor/connections"
 	ctrlr "github.com/Ptt-Alertor/ptt-alertor/controllers"
 	"github.com/Ptt-Alertor/ptt-alertor/jobs"
 )
@@ -59,6 +61,8 @@ func basicAuth(handle httprouter.Handle) httprouter.Handle {
 }
 
 func main() {
+	checkConnections()
+
 	log.Info("Start Jobs")
 	startJobs()
 
@@ -110,7 +114,9 @@ func main() {
 	router.POST("/messenger/webhook", m.Received)
 
 	// telegram
-	router.POST("/telegram/"+telegramToken, telegram.HandleRequest)
+	if telegramToken != "" {
+		router.POST("/telegram/"+telegramToken, telegram.HandleRequest)
+	}
 
 	// gops agent
 	if err := agent.Listen(agent.Options{Addr: ":6060", ShutdownCleanup: true}); err != nil {
@@ -130,8 +136,8 @@ func main() {
 	}()
 
 	// graceful shutdown
-	quit := make(chan os.Signal)
-	signal.Notify(quit, os.Interrupt)
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
 	<-quit
 	log.Info("Shutdown Web Server...")
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -140,6 +146,15 @@ func main() {
 		log.WithError(err).Fatal("Web Server Showdown Failed")
 	}
 	log.Info("Web Server Was Been Shutdown")
+}
+
+func checkConnections() {
+	conn := connections.Redis()
+	defer conn.Close()
+	if _, err := conn.Do("PING"); err != nil {
+		log.WithError(err).Fatal("Redis Connect Failed, Check REDIS_ENDPOINT and REDIS_PORT")
+	}
+	connections.EnsureDynamoDBTables()
 }
 
 func startJobs() {

@@ -11,6 +11,10 @@ func Alert() (int, error) {
 	conn := connections.Redis()
 	defer conn.Close()
 	count, err := redis.Int(conn.Do("GET", "counter:alert"))
+	// counter not exists before first alert
+	if err == redis.ErrNil {
+		return 0, nil
+	}
 	if err != nil {
 		log.WithField("runtime", myutil.BasicRuntimeInfo()).WithError(err).Error()
 	}

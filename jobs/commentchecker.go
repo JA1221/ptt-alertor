@@ -57,6 +57,10 @@ func (cc commentChecker) Run() {
 				return
 			default:
 				codes := new(article.Articles).List()
+				// avoid busy loop when nothing is subscribed
+				if len(codes) == 0 {
+					time.Sleep(cc.duration)
+				}
 				for _, code := range codes {
 					time.Sleep(cc.duration)
 					go cc.checkComments(code, ach)

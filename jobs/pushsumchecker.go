@@ -26,6 +26,9 @@ const overdueHour = 48 * time.Hour
 var psCker *pushSumChecker
 var pscOnce sync.Once
 
+// crawlingBoards keeps boards being crawled, avoid stacking crawls of the same board
+var crawlingBoards sync.Map
+
 type pushSumChecker struct {
 	Checker
 	ch       chan pushSumChecker
@@ -75,10 +78,20 @@ func (psc pushSumChecker) Run() {
 				return
 			default:
 				boards := pushsum.List()
-				for _, board := range boards {
-					ba := BoardArticles{board: board}
+				// avoid busy loop when nothing is subscribed
+				if len(boards) == 0 {
 					time.Sleep(psc.duration)
-					go psc.crawlArticles(ba, baCh)
+				}
+				for _, board := range boards {
+					time.Sleep(psc.duration)
+					if _, crawling := crawlingBoards.LoadOrStore(board, true); crawling {
+						continue
+					}
+					ba := BoardArticles{board: board}
+					go func() {
+						defer crawlingBoards.Delete(ba.board)
+						psc.crawlArticles(ba, baCh)
+					}()
 				}
 			}
 		}
@@ -118,6 +131,8 @@ func (psc pushSumChecker) crawlArticles(ba BoardArticles, baCh chan BoardArticle
 
 Page:
 	for page := currentPage; page > 0; page-- {
+		// slow down to avoid being blocked by ptt.cc
+		time.Sleep(psc.duration)
 		articles, _ := web.FetchArticles(ba.board, page)
 		for i := len(articles) - 1; i > 0; i-- {
 			a := articles[i]

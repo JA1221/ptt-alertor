@@ -17,7 +17,7 @@ func newPool() *redis.Pool {
 		Dial: func() (redis.Conn, error) {
 			conn, err := redis.Dial("tcp", os.Getenv("REDIS_ENDPOINT")+":"+os.Getenv("REDIS_PORT"))
 			if err != nil {
-				log.Fatal(err)
+				log.WithError(err).Error("Redis Dial Failed")
 			}
 			return conn, err
 		},

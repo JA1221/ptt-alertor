@@ -8,7 +8,7 @@ import (
 	log "github.com/Ptt-Alertor/logrus"
 	"github.com/Ptt-Alertor/ptt-alertor/myutil"
 	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/Ptt-Alertor/ptt-alertor/connections"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
 	"github.com/aws/aws-sdk-go/service/dynamodb/dynamodbattribute"
 )
@@ -19,7 +19,7 @@ const tableName string = "articles"
 type DynamoDB struct{}
 
 func (DynamoDB) Find(code string, a *Article) {
-	dynamo := dynamodb.New(session.New())
+	dynamo := connections.DynamoDB()
 	result, err := dynamo.GetItem(&dynamodb.GetItemInput{
 		TableName: aws.String(tableName),
 		Key: map[string]*dynamodb.AttributeValue{
@@ -78,7 +78,7 @@ func (DynamoDB) Save(a Article) error {
 		myutil.LogJSONEncode(err, a)
 		return err
 	}
-	dynamo := dynamodb.New(session.New())
+	dynamo := connections.DynamoDB()
 	_, err = dynamo.PutItem(&dynamodb.PutItemInput{
 		Item: map[string]*dynamodb.AttributeValue{
 			"ID": {
@@ -122,7 +122,7 @@ func (DynamoDB) Save(a Article) error {
 }
 
 func (DynamoDB) Delete(code string) error {
-	dynamo := dynamodb.New(session.New())
+	dynamo := connections.DynamoDB()
 	_, err := dynamo.DeleteItem(&dynamodb.DeleteItemInput{
 		Key: map[string]*dynamodb.AttributeValue{
 			"Code": {

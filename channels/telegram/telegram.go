@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"regexp"
+	"strings"
 
 	log "github.com/Ptt-Alertor/logrus"
 
@@ -25,12 +26,22 @@ var (
 )
 
 func init() {
+	if token == "" {
+		log.Warn("TELEGRAM_TOKEN Is Empty, Telegram Bot Disabled")
+		return
+	}
 	bot, err = tgbotapi.NewBotAPI(token)
 	if err != nil {
 		log.WithError(err).Fatal("Telegram Bot Initialize Failed")
 	}
 	// bot.Debug = true
 	log.Info("Telegram Authorized on " + bot.Self.UserName)
+
+	// telegram webhook requires public https host, use long polling otherwise (e.g. local)
+	if !strings.HasPrefix(host, "https://") {
+		go pollUpdates()
+		return
+	}
 
 	webhookConfig := tgbotapi.NewWebhook(host + "/telegram/" + token)
 	webhookConfig.MaxConnections = 100
@@ -39,6 +50,29 @@ func init() {
 		log.WithError(err).Fatal("Telegram Bot Set Webhook Failed")
 	}
 	log.Info("Telegram Bot Sets Webhook Success")
+}
+
+func pollUpdates() {
+	if _, err := bot.RemoveWebhook(); err != nil {
+		log.WithError(err).Fatal("Telegram Bot Remove Webhook Failed")
+	}
+	u := tgbotapi.NewUpdate(0)
+	u.Timeout = 60
+	updates, err := bot.GetUpdatesChan(u)
+	if err != nil {
+		log.WithError(err).Fatal("Telegram Bot Get Updates Failed")
+	}
+	log.Info("Telegram Bot Starts Long Polling")
+	for update := range updates {
+		go func(update tgbotapi.Update) {
+			defer func() {
+				if r := recover(); r != nil {
+					log.WithField("panic", r).Error("Telegram Handle Update Panic")
+				}
+			}()
+			handleUpdate(update)
+		}(update)
+	}
 }
 
 // HandleRequest handles request from webhook
@@ -50,7 +84,10 @@ func HandleRequest(w http.ResponseWriter, r *http.Request, _ httprouter.Params) 
 
 	var update tgbotapi.Update
 	json.Unmarshal(bytes, &update)
+	handleUpdate(update)
+}
 
+func handleUpdate(update tgbotapi.Update) {
 	if update.CallbackQuery != nil {
 		handleCallbackQuery(update)
 		return
@@ -154,6 +191,10 @@ func SendTextMessage(chatID int64, text string) {
 }
 
 func sendTextMessage(chatID int64, text string) {
+	if bot == nil {
+		log.Warn("Telegram Bot Disabled, Message Not Sent")
+		return
+	}
 	msg := tgbotapi.NewMessage(chatID, text)
 	msg.DisableWebPagePreview = true
 	_, err := bot.Send(msg)
