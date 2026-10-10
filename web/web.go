@@ -112,7 +112,7 @@ func post(h http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 		if !sameOrigin(r) {
-			http.Error(w, "forbidden", http.StatusForbidden)
+			http.Error(w, "拒絕：請求不是從這個網頁送出的", http.StatusForbidden)
 			return
 		}
 		h(w, r)
@@ -203,7 +203,7 @@ func (s *Server) member(done string, action func(account string) error) http.Han
 	return func(w http.ResponseWriter, r *http.Request) {
 		account := r.FormValue("account")
 		if _, err := strconv.ParseInt(account, 10, 64); err != nil {
-			http.Error(w, "invalid account", http.StatusBadRequest)
+			http.Error(w, "找不到這個帳號，請重新整理網頁", http.StatusBadRequest)
 			return
 		}
 		name := nameOf(account)
@@ -219,7 +219,7 @@ func (s *Server) registration(w http.ResponseWriter, r *http.Request) {
 	mode := r.FormValue("mode")
 	name, ok := access.ModeNames[mode]
 	if !ok {
-		http.Error(w, "invalid mode", http.StatusBadRequest)
+		http.Error(w, "不認得這個註冊模式", http.StatusBadRequest)
 		return
 	}
 	if err := access.SetRegistration(mode); err != nil {
@@ -231,8 +231,13 @@ func (s *Server) registration(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) keywords(w http.ResponseWriter, r *http.Request) {
 	account, action := r.FormValue("account"), r.FormValue("action")
-	if ok, err := access.IsMember(account); err != nil || !ok || (action != "新增" && action != "刪除") {
-		http.Error(w, "invalid request", http.StatusBadRequest)
+	ok, err := access.IsMember(account)
+	if err != nil {
+		http.Error(w, "Redis 無法連線："+err.Error(), http.StatusServiceUnavailable)
+		return
+	}
+	if !ok || (action != "新增" && action != "刪除") {
+		http.Error(w, "這個成員已不存在或動作不正確，請重新整理網頁", http.StatusBadRequest)
 		return
 	}
 	board, keywords := r.FormValue("board"), r.FormValue("keywords")
@@ -246,7 +251,7 @@ func (s *Server) keywords(w http.ResponseWriter, r *http.Request) {
 func (s *Server) download(w http.ResponseWriter, r *http.Request) {
 	// backup has the token, only links of this site may download it
 	if !sameOrigin(r) {
-		http.Error(w, "forbidden", http.StatusForbidden)
+		http.Error(w, "拒絕：請求不是從這個網頁送出的", http.StatusForbidden)
 		return
 	}
 	var buf bytes.Buffer
