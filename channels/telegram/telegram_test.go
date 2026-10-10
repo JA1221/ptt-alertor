@@ -44,7 +44,7 @@ func TestInlineMarkup(t *testing.T) {
 
 func TestReplyKeyboard(t *testing.T) {
 	k := replyKeyboard()
-	if !k.ResizeKeyboard || len(k.Keyboard) != 2 || k.Keyboard[0][0].Text != "📋 清單" {
+	if !k.ResizeKeyboard || len(k.Keyboard) != 2 || k.Keyboard[0][0].Text != "➕ 新增" {
 		t.Errorf("keyboard = %+v", k)
 	}
 }

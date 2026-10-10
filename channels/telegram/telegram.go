@@ -87,6 +87,7 @@ var menu = []struct {
 	Command     string `json:"command"`
 	Description string `json:"description"`
 }{
+	{"add", "新增關鍵字"},
 	{"list", "我的關鍵字"},
 	{"articles", "推文追蹤清單"},
 	{"status", "運作狀態"},

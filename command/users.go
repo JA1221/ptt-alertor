@@ -1,6 +1,7 @@
 package command
 
 import (
+	"errors"
 	"fmt"
 	"sort"
 	"strconv"
@@ -89,46 +90,71 @@ func (h *Handler) send(account string, msg notify.Message) {
 // manage handles approve, reject and remove buttons of admins
 func (h *Handler) manage(data string) (notify.Message, error) {
 	account := data[len(cbApprove):]
-	name := account
-	if u, err := user.Find(account); err == nil {
-		name = u.DisplayName()
-	}
 	switch data[:len(cbApprove)] {
 	case cbApprove:
-		if err := access.Approve(account); err != nil {
+		if err := h.Approve(account); err != nil {
 			return notify.Message{}, err
 		}
-		if err := keyword.Update(account, true); err != nil {
-			return notify.Message{}, err
-		}
-		welcome := Welcome()
-		welcome.Text = "✅ 管理員已同意，可以開始使用了！\n\n" + welcome.Text
-		h.send(account, welcome)
-		log.WithField("account", account).Info("Member Approved")
-		return notify.Message{Text: "✅ 已允許 " + notify.E(name), Edit: true}, nil
+		return notify.Message{Text: "✅ 已允許 " + notify.E(nameOf(account)), Edit: true}, nil
 	case cbReject:
-		if err := access.Reject(account); err != nil {
+		if err := h.Reject(account); err != nil {
 			return notify.Message{}, err
 		}
-		h.send(account, notify.Text("管理員沒有同意你的使用申請。"))
-		return notify.Message{Text: "❌ 已拒絕 " + notify.E(name), Edit: true}, nil
+		return notify.Message{Text: "❌ 已拒絕 " + notify.E(nameOf(account)), Edit: true}, nil
 	default:
-		admin, err := access.IsAdmin(account)
-		if err != nil {
-			return notify.Message{}, err
-		}
-		if admin {
+		if err := h.RemoveMember(account); err == ErrRemoveAdmin {
 			return notify.Text("不能移除管理員。"), nil
-		}
-		if err := access.Remove(account); err != nil {
+		} else if err != nil {
 			return notify.Message{}, err
 		}
-		if err := keyword.Update(account, false); err != nil {
-			return notify.Message{}, err
-		}
-		log.WithField("account", account).Info("Member Removed")
 		return h.users(true)
 	}
+}
+
+// Approve makes account member and tells the account
+func (h *Handler) Approve(account string) error {
+	if err := access.Approve(account); err != nil {
+		return err
+	}
+	if err := keyword.Update(account, true); err != nil {
+		return err
+	}
+	welcome := Welcome()
+	welcome.Text = "✅ 管理員已同意，可以開始使用了！\n\n" + welcome.Text
+	h.send(account, welcome)
+	log.WithField("account", account).Info("Member Approved")
+	return nil
+}
+
+// Reject rejects request of account and tells the account
+func (h *Handler) Reject(account string) error {
+	if err := access.Reject(account); err != nil {
+		return err
+	}
+	h.send(account, notify.Text("管理員沒有同意你的使用申請。"))
+	return nil
+}
+
+// ErrRemoveAdmin means admins can not be removed
+var ErrRemoveAdmin = errors.New("不能移除管理員")
+
+// RemoveMember stops account using the bot, its subscriptions are kept but not checked
+func (h *Handler) RemoveMember(account string) error {
+	admin, err := access.IsAdmin(account)
+	if err != nil {
+		return err
+	}
+	if admin {
+		return ErrRemoveAdmin
+	}
+	if err := access.Remove(account); err != nil {
+		return err
+	}
+	if err := keyword.Update(account, false); err != nil {
+		return err
+	}
+	log.WithField("account", account).Info("Member Removed")
+	return nil
 }
 
 // users lists members and pending accounts for admins

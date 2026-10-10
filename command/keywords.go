@@ -3,8 +3,10 @@ package command
 import (
 	"errors"
 	"fmt"
+	"html"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -16,7 +18,7 @@ import (
 )
 
 const (
-	// maxListButtons limits delete buttons of list, telegram allows about 100
+	// maxListButtons limits buttons of a list, telegram allows about 100
 	maxListButtons = 60
 	// testShowLimit limits articles shown per keyword by 測試
 	testShowLimit = 5
@@ -27,37 +29,62 @@ type errLimit string
 
 func (e errLimit) Error() string { return string(e) }
 
+// list shows keywords and a button for each board
 func (h *Handler) list(account string, edit bool) (notify.Message, error) {
 	u, err := user.Find(account)
 	if err != nil {
 		return notify.Message{}, err
 	}
 	msg := notify.Message{Edit: edit}
-	subs := u.Subscribes.Sorted()
 	lines := []string{"📋 <b>你的關鍵字</b>"}
 	var buttons []notify.Button
-	for _, s := range subs {
+	for _, s := range u.Subscribes.Sorted() {
 		if len(s.Keywords) == 0 {
 			continue
 		}
 		lines = append(lines, "<b>"+notify.E(s.Board)+"</b>："+notify.E(strings.Join(s.Keywords, "、")))
-		for _, kw := range s.Keywords {
-			data := cbDeleteKeyword + s.Board + "|" + kw
-			if len(data) <= callbackLimit && len(buttons) < maxListButtons {
-				buttons = append(buttons, button("🗑 "+s.Board+"｜"+truncate(kw, 16), data))
-			}
-		}
+		buttons = append(buttons, button(fmt.Sprintf("%s（%d）", s.Board, len(s.Keywords)), cbBoardView+s.Board))
 	}
 	if len(lines) == 1 {
-		lines = append(lines, "（還沒有關鍵字）", "", "新增範例：<code>新增 stock 台積電</code>")
+		lines = append(lines, "（還沒有關鍵字）")
 	} else {
-		lines = append(lines, "", "點下方按鈕可刪除關鍵字。")
+		lines = append(lines, "", "點看板可刪除或新增關鍵字。")
 	}
 	lines = append(lines, "", fmt.Sprintf("💬 推文追蹤 %d 篇，輸入「推文清單」查看。", u.Subscribes.ArticleCount()))
 	msg.Text = strings.Join(lines, "\n")
-	for i := 0; i < len(buttons); i += 2 {
-		msg.Buttons = append(msg.Buttons, buttons[i:min(i+2, len(buttons))])
+	msg.Buttons = append(rows(buttons, 2), buttonRow(button("➕ 新增關鍵字", "新增"))...)
+	return msg, nil
+}
+
+// boardView shows keywords of a board with buttons to delete them
+func (h *Handler) boardView(account, boardName string, edit bool) (notify.Message, error) {
+	u, err := user.Find(account)
+	if err != nil {
+		return notify.Message{}, err
 	}
+	sub, _ := u.Subscribes.Find(boardName)
+	if len(sub.Keywords) == 0 {
+		return h.list(account, edit)
+	}
+	msg := notify.Message{
+		Text: strings.Join([]string{
+			fmt.Sprintf("📋 <b>%s</b> 的關鍵字（%d/%d）", notify.E(sub.Board), len(sub.Keywords), MaxKeywords),
+			notify.E(strings.Join(sub.Keywords, "、")),
+			"",
+			"點關鍵字可刪除。",
+		}, "\n"),
+		Edit: edit,
+	}
+	var buttons []notify.Button
+	for _, kw := range sub.Keywords {
+		if data := cbDeleteKeyword + sub.Board + "|" + kw; len(data) <= callbackLimit {
+			buttons = append(buttons, button("🗑 "+truncate(kw, 20), data))
+		}
+	}
+	msg.Buttons = append(rows(buttons, 2),
+		[]notify.Button{button("➕ 新增", cbPickBoard+sub.Board), button("🗑 全部刪除", cbDeleteBoard+sub.Board)},
+		[]notify.Button{button("⬅️ 返回清單", "清單")},
+	)
 	return msg, nil
 }
 
@@ -79,7 +106,42 @@ func splitParams(s string) []string {
 	return params
 }
 
+// keywords adds or removes keywords and shows the list
 func (h *Handler) keywords(account, action, boardStr, keywordStr string) (notify.Message, error) {
+	problem, err := h.editKeywords(account, action, boardStr, keywordStr)
+	if err != nil || problem.Text != "" {
+		return problem, err
+	}
+	return h.added(account, action, nil)
+}
+
+// added shows the list after keywords changed
+func (h *Handler) added(account, action string, err error) (notify.Message, error) {
+	if err != nil {
+		return notify.Message{}, err
+	}
+	list, err := h.list(account, false)
+	list.Text = "✅ " + action + "成功\n\n" + list.Text
+	return list, err
+}
+
+// EditKeywords adds (action 新增) or removes (刪除) comma separated keywords of comma separated boards,
+// problem is a reason shown to user when nothing changed
+func (h *Handler) EditKeywords(account, action, boardStr, keywordStr string) (problem string, err error) {
+	// e.g. admins set by env who never talked to the bot, private chat id equals user id
+	if _, err := user.Find(account); err == user.ErrNotFound {
+		chatID, _ := strconv.ParseInt(account, 10, 64)
+		if _, err := user.Register(account, chatID, ""); err != nil {
+			return "", err
+		}
+	}
+	msg, err := h.editKeywords(account, action, boardStr, keywordStr)
+	return html.UnescapeString(msg.Text), err
+}
+
+// editKeywords changes keywords, the message is empty when changed,
+// otherwise it tells user why nothing changed
+func (h *Handler) editKeywords(account, action, boardStr, keywordStr string) (notify.Message, error) {
 	boards := splitParams(boardStr)
 	for i, b := range boards {
 		if !boardNameRe.MatchString(b) {
@@ -133,15 +195,10 @@ func (h *Handler) keywords(account, action, boardStr, keywordStr string) (notify
 	if errors.As(err, &limit) {
 		return notify.Text(limit.Error()), nil
 	}
-	if err == nil {
-		err = keyword.Update(account, true)
-	}
 	if err != nil {
 		return notify.Message{}, err
 	}
-	list, err := h.list(account, false)
-	list.Text = "✅ " + action + "成功\n\n" + list.Text
-	return list, err
+	return notify.Message{}, keyword.Update(account, true)
 }
 
 // checkBoards reports all boards exist, otherwise message tells wrong ones

@@ -38,6 +38,10 @@ const (
 	cbApprove       = "ap|"
 	cbReject        = "rj|"
 	cbRemoveUser    = "rm|"
+	cbPickBoard     = "pb|"
+	cbOtherBoard    = "ob"
+	cbBoardView     = "bv|"
+	cbDeleteBoard   = "db|"
 	cbCancel        = "cancel"
 )
 
@@ -61,6 +65,8 @@ type Handler struct {
 	CheckBoard   func(name string) error
 	FetchBoard   func(name string) (article.Articles, error)
 	FetchArticle func(board, code string) (article.Article, error)
+
+	prompts prompts
 }
 
 // NewHandler creates Handler fetching from ptt
@@ -76,6 +82,7 @@ func NewHandler(tracker *health.Tracker, n notify.Notifier) *Handler {
 
 // keyboard buttons send these texts
 var keyboardAlias = map[string]string{
+	"➕ 新增":   "新增",
 	"📋 清單":   "清單",
 	"💬 推文清單": "推文清單",
 	"📊 狀態":   "狀態",
@@ -84,6 +91,7 @@ var keyboardAlias = map[string]string{
 
 // slash commands of telegram menu
 var slashAlias = map[string]string{
+	"/add":      "新增",
 	"/list":     "清單",
 	"/articles": "推文清單",
 	"/status":   "狀態",
@@ -155,6 +163,8 @@ func (h *Handler) register(in Input) error {
 }
 
 func (h *Handler) command(in Input) (notify.Message, error) {
+	// input asked by a menu is dropped when user runs another command
+	asked, prompted := h.prompts.take(in.Account)
 	text := in.Text
 	if alias, ok := keyboardAlias[text]; ok {
 		text = alias
@@ -185,12 +195,15 @@ func (h *Handler) command(in Input) (notify.Message, error) {
 		}
 		return h.test(in.Account, args[1])
 	case "新增", "刪除":
+		if text == "新增" {
+			return h.addMenu(in.Account)
+		}
 		args := keywordRe.FindStringSubmatch(text)
 		if args == nil {
 			return notify.Text("格式錯誤，需以空白分隔動作、看板、關鍵字。\n範例：" + fields[0] + " gossiping,movie 金城武,結衣"), nil
 		}
 		if args[1] == "刪除" && args[3] == "*" && !in.Callback && len(text) <= callbackLimit {
-			return confirm("確定刪除 "+args[2]+" 的全部關鍵字？", text), nil
+			return confirm("確定刪除 "+args[2]+" 的全部關鍵字？", text, cbCancel), nil
 		}
 		return h.keywords(in.Account, args[1], args[2], args[3])
 	case "新增推文", "刪除推文":
@@ -220,6 +233,9 @@ func (h *Handler) command(in Input) (notify.Message, error) {
 		}
 		return h.setRegistration(args[1])
 	}
+	if prompted {
+		return h.answerPrompt(in.Account, asked, text)
+	}
 	return h.guess(text), nil
 }
 
@@ -245,6 +261,8 @@ func (h *Handler) guess(text string) notify.Message {
 
 func (h *Handler) callback(in Input) (notify.Message, error) {
 	data := in.Text
+	// pressing any button cancels input asked before
+	h.prompts.take(in.Account)
 	split := func(prefix string) []string {
 		return strings.SplitN(strings.TrimPrefix(data, prefix), "|", 2)
 	}
@@ -259,7 +277,18 @@ func (h *Handler) callback(in Input) (notify.Message, error) {
 		if _, err := h.keywords(in.Account, "刪除", args[0], args[1]); err != nil {
 			return notify.Message{}, err
 		}
-		return h.list(in.Account, true)
+		return h.boardView(in.Account, args[0], true)
+	case strings.HasPrefix(data, cbBoardView):
+		return h.boardView(in.Account, strings.TrimPrefix(data, cbBoardView), true)
+	case strings.HasPrefix(data, cbDeleteBoard):
+		name := strings.TrimPrefix(data, cbDeleteBoard)
+		msg := confirm("確定刪除 "+name+" 的全部關鍵字？", "刪除 "+name+" *", cbBoardView+name)
+		msg.Edit = true
+		return msg, nil
+	case strings.HasPrefix(data, cbPickBoard):
+		return h.askKeywords(in.Account, strings.TrimPrefix(data, cbPickBoard)), nil
+	case data == cbOtherBoard:
+		return h.askBoard(in.Account), nil
 	case strings.HasPrefix(data, cbAddKeyword):
 		args := split(cbAddKeyword)
 		if len(args) != 2 {
@@ -302,9 +331,9 @@ func buttonRow(buttons ...notify.Button) [][]notify.Button {
 	return [][]notify.Button{buttons}
 }
 
-// confirm asks to run cmd, cmd must fit callback limit
-func confirm(question, cmd string) notify.Message {
+// confirm asks to run cmd, otherwise runs no, both must fit callback limit
+func confirm(question, cmd, no string) notify.Message {
 	msg := notify.Text(question)
-	msg.Buttons = buttonRow(button("是", cmd), button("否", cbCancel))
+	msg.Buttons = buttonRow(button("是", cmd), button("否", no))
 	return msg
 }

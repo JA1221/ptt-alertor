@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/signal"
@@ -25,6 +26,7 @@ import (
 	"github.com/Ptt-Alertor/ptt-alertor/models/access"
 	"github.com/Ptt-Alertor/ptt-alertor/models/board"
 	"github.com/Ptt-Alertor/ptt-alertor/models/keyword"
+	"github.com/Ptt-Alertor/ptt-alertor/notify"
 	pttweb "github.com/Ptt-Alertor/ptt-alertor/ptt/web"
 	"github.com/Ptt-Alertor/ptt-alertor/web"
 )
@@ -59,6 +61,9 @@ func main() {
 	}
 
 	tracker := health.New()
+	// messages from web actions are sent once telegram is connected
+	relay := &notify.Relay{}
+	handler := command.NewHandler(tracker, relay)
 	tokens := make(chan string, 1)
 	hasToken := func() bool {
 		if cfg.TelegramToken != "" {
@@ -70,8 +75,16 @@ func main() {
 	srv := &http.Server{
 		Addr: cfg.HTTPAddr,
 		Handler: (&web.Server{
-			Health:   tracker,
-			Version:  version,
+			Health:  tracker,
+			Version: version,
+			Actions: handler,
+			Restore: func(r io.Reader) (int, error) {
+				n, err := backup.Import(r)
+				if err != nil {
+					return 0, err
+				}
+				return n, prepare(cfg)
+			},
 			HasToken: hasToken,
 			SaveToken: func(token string) (string, error) {
 				name, err := telegram.Verify(token)
@@ -99,7 +112,8 @@ func main() {
 
 	var wg sync.WaitGroup
 	if bot := connectTelegram(ctx, cfg, tokens, tracker); bot != nil {
-		start(ctx, &wg, bot, tracker)
+		relay.Set(bot)
+		start(ctx, &wg, bot, handler, tracker)
 	}
 
 	<-ctx.Done()
@@ -142,8 +156,7 @@ func prepare(cfg config.Config) error {
 	return nil
 }
 
-func start(ctx context.Context, wg *sync.WaitGroup, bot *telegram.Bot, tracker *health.Tracker) {
-	handler := command.NewHandler(tracker, bot)
+func start(ctx context.Context, wg *sync.WaitGroup, bot *telegram.Bot, handler *command.Handler, tracker *health.Tracker) {
 	bot.SetHandler(handler.Handle)
 	run := func(f func(ctx context.Context)) {
 		wg.Add(1)

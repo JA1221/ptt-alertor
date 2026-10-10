@@ -249,7 +249,7 @@ func TestAddAndRemoveKeywords(t *testing.T) {
 	if !strings.HasPrefix(got.Text, "✅ 新增成功") || !strings.Contains(got.Text, "<b>stock</b>：台積電、聯發科、鴻海") {
 		t.Fatalf("reply = %q", got.Text)
 	}
-	if !hasButton(got, "dk|stock|聯發科") {
+	if !hasButton(got, "bv|stock") || !hasButton(got, "bv|movie") || !hasButton(got, "新增") {
 		t.Errorf("buttons = %+v", got.Buttons)
 	}
 	if subs, _ := keyword.Subscribers("movie"); !reflect.DeepEqual(subs, []string{"1"}) {
@@ -267,10 +267,20 @@ func TestAddAndRemoveKeywords(t *testing.T) {
 		t.Errorf("reply = %q", got.Text)
 	}
 
-	// delete button refreshes list
+	// board view lists keywords with delete buttons, deleting refreshes it
+	got = press(h, "1", "bv|stock")
+	if !got.Edit || !strings.Contains(got.Text, "<b>stock</b> 的關鍵字（4/20）") || !hasButton(got, "dk|stock|聯發科") {
+		t.Fatalf("board view = %+v", got)
+	}
 	got = press(h, "1", "dk|stock|聯發科")
-	if !got.Edit || !strings.Contains(got.Text, "<b>stock</b>：台積電、鴻海") || hasButton(got, "dk|stock|聯發科") {
+	if !got.Edit || !strings.Contains(got.Text, "台積電、鴻海") || hasButton(got, "dk|stock|聯發科") {
 		t.Errorf("after delete = %+v", got)
+	}
+
+	// delete whole board from board view asks first, "no" goes back
+	got = press(h, "1", "db|movie")
+	if !got.Edit || !hasButton(got, "刪除 movie *") || !hasButton(got, "bv|movie") {
+		t.Fatalf("delete board = %+v", got)
 	}
 
 	got = say(h, "1", "刪除 movie *")
@@ -346,7 +356,7 @@ func TestGuess(t *testing.T) {
 
 func TestKeywordFormatErrors(t *testing.T) {
 	h, _ := setup(t)
-	for _, text := range []string{"新增", "新增 stock", "新增 st@ck a"} {
+	for _, text := range []string{"刪除", "新增 stock", "新增 st@ck a"} {
 		if got := say(h, "1", text); !strings.Contains(got.Text, "格式錯誤") {
 			t.Errorf("Handle(%q) = %q", text, got.Text)
 		}
@@ -481,5 +491,112 @@ func TestDisabledUserResumes(t *testing.T) {
 	say(h, "1", "清單")
 	if !board.Exist("stock") {
 		t.Error("talking to the bot again resumes notifications")
+	}
+}
+
+func TestAddMenu(t *testing.T) {
+	h, _ := setup(t)
+	say(h, "1", "新增 movie a")
+
+	for _, text := range []string{"➕ 新增", "新增", "/add"} {
+		got := say(h, "1", text)
+		if !hasButton(got, "pb|movie") || !hasButton(got, "pb|Stock") || !hasButton(got, "ob") {
+			t.Fatalf("menu %q = %+v", text, got)
+		}
+		if got.Buttons[0][0].Data != "pb|movie" {
+			t.Errorf("boards of user come first: %+v", got.Buttons[0])
+		}
+	}
+
+	got := press(h, "1", "pb|Stock")
+	if !got.Edit || !strings.Contains(got.Text, "<b>Stock</b> 通知的關鍵字") {
+		t.Fatalf("ask keywords = %+v", got)
+	}
+	got = say(h, "1", "台積電, 聯發科")
+	if !strings.HasPrefix(got.Text, "✅ 新增成功") {
+		t.Fatalf("answer = %q", got.Text)
+	}
+	if kws := keywordsOf(t, "1", "stock"); !reflect.DeepEqual(kws, []string{"台積電", "聯發科"}) {
+		t.Errorf("keywords = %v", kws)
+	}
+	if got := say(h, "1", "鴻海"); !strings.Contains(got.Text, "看不懂") {
+		t.Errorf("prompt is answered once: %q", got.Text)
+	}
+}
+
+func TestAddMenuOtherBoard(t *testing.T) {
+	h, _ := setup(t)
+	say(h, "1", "新增 stock a")
+
+	press(h, "1", "ob")
+	got := say(h, "1", "stokc")
+	if !strings.Contains(got.Text, "是不是 stock") || !hasButton(got, "pb|stock") {
+		t.Fatalf("wrong board = %+v", got)
+	}
+	if got := say(h, "1", "台積電"); !strings.Contains(got.Text, "看不懂") {
+		t.Errorf("wrong board ends prompt: %q", got.Text)
+	}
+
+	press(h, "1", "ob")
+	if got := say(h, "1", "Gossiping"); !strings.Contains(got.Text, "<b>gossiping</b> 通知的關鍵字") || got.Edit {
+		t.Fatalf("board answer = %+v", got)
+	}
+	say(h, "1", "柯")
+	if kws := keywordsOf(t, "1", "gossiping"); !reflect.DeepEqual(kws, []string{"柯"}) {
+		t.Errorf("keywords = %v", kws)
+	}
+}
+
+func TestAddMenuCancelledByCommand(t *testing.T) {
+	h, _ := setup(t)
+	press(h, "1", "pb|stock")
+	if got := say(h, "1", "清單"); !strings.Contains(got.Text, "你的關鍵字") {
+		t.Fatalf("command while asked = %q", got.Text)
+	}
+	say(h, "1", "台積電")
+	if kws := keywordsOf(t, "1", "stock"); len(kws) != 0 {
+		t.Errorf("prompt should be dropped: %v", kws)
+	}
+
+	press(h, "1", "pb|stock")
+	press(h, "1", "cancel")
+	say(h, "1", "台積電")
+	if kws := keywordsOf(t, "1", "stock"); len(kws) != 0 {
+		t.Errorf("cancel should drop prompt: %v", kws)
+	}
+
+	press(h, "1", "pb|stock")
+	got := say(h, "1", "regexp:[")
+	if !strings.Contains(got.Text, "正規表示式錯誤") || !hasButton(got, "pb|stock") {
+		t.Errorf("invalid answer offers retry: %+v", got)
+	}
+}
+
+func TestEditKeywordsForWeb(t *testing.T) {
+	h, _ := setup(t)
+	if problem, err := h.EditKeywords("1", "新增", "stock", "a&b"); problem != "" || err != nil {
+		t.Fatalf("EditKeywords() = %q, %v", problem, err)
+	}
+	if kws := keywordsOf(t, "1", "stock"); !reflect.DeepEqual(kws, []string{"a&b"}) {
+		t.Errorf("keywords = %v", kws)
+	}
+	if problem, _ := h.EditKeywords("1", "新增", "stokc", "x"); !strings.Contains(problem, "是不是 stock") {
+		t.Errorf("problem = %q", problem)
+	}
+	if problem, _ := h.EditKeywords("1", "刪除", "stock", "a&b"); problem != "" || board.Exist("stock") {
+		t.Errorf("delete problem = %q", problem)
+	}
+	if err := h.RemoveMember("1"); err != ErrRemoveAdmin {
+		t.Errorf("RemoveMember(admin) = %v", err)
+	}
+}
+
+func TestKeyboardButtonsAreCommands(t *testing.T) {
+	for _, row := range KeyboardRows {
+		for _, text := range row {
+			if _, ok := keyboardAlias[text]; !ok {
+				t.Errorf("keyboard button %q has no alias", text)
+			}
+		}
 	}
 }

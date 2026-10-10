@@ -7,6 +7,7 @@ PTT 關鍵字通知 Telegram bot。自己架、分享給朋友用，不用寫程
 - 🔔 看板有新文章標題符合關鍵字就通知，支援「同時包含」「排除」「正規表示式」
 - 💬 追蹤文章推文，有新推文就傳內容
 - 👥 朋友傳訊息給 bot → 你按「允許」就能用
+- 🖱️ Telegram 按鈕選單操作，網頁也能管理成員與關鍵字
 - 📊 狀態頁、異常主動通知，壞了會知道
 
 ## 三步驟架設
@@ -29,13 +30,17 @@ PTT 關鍵字通知 Telegram bot。自己架、分享給朋友用，不用寫程
 1. 在 Telegram 找 [@BotFather](https://t.me/BotFather)，傳 `/newbot` 建立 bot，把拿到的 token 貼到網頁
 2. 點「在 Telegram 開啟」→ 按「開始」，你就是管理員了
 
-完成！在 Telegram 傳 `新增 stock 台積電` 試試看。
+完成！在 Telegram 按下方「➕ 新增」，選看板、輸入關鍵字試試看。
 
 > 想讓電腦開機後自動執行：Docker Desktop → Settings → General → 勾選「Start Docker Desktop when you sign in」。
 
 ## 分享給朋友
 
-把 bot 連結 `https://t.me/你的bot帳號` 傳給朋友（狀態頁上也有）。朋友傳訊息給 bot 時，你會在 Telegram 收到「✅ 允許／❌ 拒絕」按鈕。
+把 bot 連結 `https://t.me/你的bot帳號` 傳給朋友（狀態頁上也有）。朋友傳訊息給 bot 時，你會在 Telegram 收到「✅ 允許／❌ 拒絕」按鈕，狀態頁上也能按。
+
+狀態頁 <http://localhost:9090> 可以直接：允許／拒絕申請、移除成員、切換註冊模式、幫任何成員新增或刪除關鍵字、下載備份與還原。
+
+Telegram 裡也可以用指令：
 
 | 管理員指令 | 說明 |
 |---|---|
@@ -48,7 +53,14 @@ PTT 關鍵字通知 Telegram bot。自己架、分享給朋友用，不用寫程
 
 ## 使用方式
 
-下方鍵盤有「清單、推文清單、狀態、指令」按鈕，清單裡每個關鍵字都能直接按鈕刪除。
+不用記指令，按下方鍵盤就好：
+
+- **➕ 新增**：選看板（自己的看板和熱門看板）→ 輸入關鍵字，完成
+- **📋 清單**：點看板 → 點關鍵字刪除，或在該看板再新增
+- **💬 推文清單**：追蹤中的文章，點按鈕停止追蹤
+- 直接貼上 PTT 文章網址 → 一鍵追蹤推文；輸入 `stock 台積電` → 一鍵新增
+
+習慣打字也可以用指令：
 
 | 指令 | 說明 |
 |---|---|
@@ -65,7 +77,7 @@ PTT 關鍵字通知 Telegram bot。自己架、分享給朋友用，不用寫程
 
 **更新到最新版？** 再執行一次 `start.bat` / `start.sh`，會自動下載最新的 1.x 版（不會跨到可能不相容的 2.x）。目前版本顯示在狀態頁最下方，改了什麼看 [Releases](https://github.com/JA1221/ptt-alertor/releases)。
 
-**備份與還原？** 雙擊 `backup.bat`（macOS / Linux：`./backup.sh`），資料會存到 `backups` 資料夾。還原時把備份檔拖曳到 `backup.bat` 上（`./backup.sh 備份檔`），還原前會先自動備份目前的資料。備份檔裡可能有 bot token，不要分享給別人。
+**備份與還原？** 狀態頁最下方可以下載備份、上傳還原。也可以雙擊 `backup.bat`（macOS / Linux：`./backup.sh`），資料會存到 `backups` 資料夾。還原時把備份檔拖曳到 `backup.bat` 上（`./backup.sh 備份檔`），還原前會先自動備份目前的資料。備份檔裡可能有 bot token，不要分享給別人。
 
 **停止？** 執行 `stop.bat`，或 `docker compose stop`。資料會保留。
 
@@ -108,12 +120,12 @@ backup/               全部資料匯出成 JSON 與還原
 connections/          Redis 連線池
 ptt/{http,rss,web}    PTT 抓取與解析
 models/               文章、看板、關鍵字索引、訂閱、使用者、權限（Redis）
-command/              指令與按鈕處理
+command/              指令、按鈕選單、對話狀態
 notify/               訊息格式與 Notifier 介面
 channels/telegram/    bot：依使用者分流、送出重試、封鎖偵測
 health/               健康狀態、異常判斷、最近通知
 jobs/                 看板檢查、推文追蹤、PTT/Redis 監控、異常通知
-web/                  設定精靈、狀態頁、/health
+web/                  設定精靈、狀態頁（管理成員、關鍵字、備份）、/health
 ```
 
 ## Credits

@@ -4,6 +4,7 @@ package notify
 import (
 	"errors"
 	"html"
+	"sync"
 	"time"
 
 	log "github.com/Ptt-Alertor/logrus"
@@ -52,6 +53,30 @@ func Link(text, url string) string {
 // Notifier sends message to a chat
 type Notifier interface {
 	Send(chatID int64, msg Message) error
+}
+
+// Relay sends by a notifier set later, e.g. after telegram is connected
+type Relay struct {
+	mu sync.RWMutex
+	n  Notifier
+}
+
+// Set sets notifier to send by
+func (r *Relay) Set(n Notifier) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.n = n
+}
+
+// Send sends by the set notifier, fails before it is set
+func (r *Relay) Send(chatID int64, msg Message) error {
+	r.mu.RLock()
+	n := r.n
+	r.mu.RUnlock()
+	if n == nil {
+		return errors.New("telegram not connected")
+	}
+	return n.Send(chatID, msg)
 }
 
 // Deliver sends message, and records it in recent notifications when sent

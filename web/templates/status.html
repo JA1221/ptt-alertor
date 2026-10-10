@@ -2,13 +2,15 @@
 <html lang="zh-Hant">
 <head>
 {{template "head"}}
-<meta http-equiv="refresh" content="30">
-<title>Ptt Alertor 狀態</title>
+<title>Ptt Alertor</title>
 </head>
 <body>
 <main>
   <h1>Ptt Alertor</h1>
-  <div class="muted">已執行 {{duration (since .Now .Started)}} · 更新於 {{clock .Now}} · 每 30 秒自動重新整理</div>
+  <div class="muted">已執行 {{duration (since .Now .Started)}} · 更新於 {{clock .Now}} · 沒在操作時每 30 秒自動更新</div>
+
+  {{if .OK}}<div class="banner ok flash">✅ {{.OK}}</div>{{end}}
+  {{if .Error}}<div class="banner bad flash">❌ {{.Error}}</div>{{end}}
 
   {{if .Healthy}}
   <div class="banner ok">✅ 全部正常</div>
@@ -18,14 +20,34 @@
   </div>
   {{end}}
 
-  {{if .Bot}}
-  <div class="card">
-    <h2>邀請朋友</h2>
-    <p>把這個連結傳給朋友：<a href="https://t.me/{{.Bot}}" target="_blank" rel="noopener">https://t.me/{{.Bot}}</a></p>
-    <p class="muted">註冊模式：<b>{{.Mode}}</b>{{if eq .Mode "審核"}}，朋友傳訊息後你會在 Telegram 收到「允許／拒絕」按鈕{{end}}。
-      在 Telegram 傳 <code>使用者</code> 管理成員、<code>註冊 開放</code> 切換模式。{{if .Pending}}<br><b>{{.Pending}} 人待審核。</b>{{end}}</p>
+  {{if .Pending}}
+  <div class="card attention" id="pending">
+    <h2>🙋 待審核（{{len .Pending}}）</h2>
+    {{range .Pending}}
+    <div class="row">
+      <div class="grow"><b>{{.Name}}</b> <span class="muted">{{.Account}}</span></div>
+      <form method="post" action="/members/approve"><input type="hidden" name="account" value="{{.Account}}"><button class="button small">✅ 允許</button></form>
+      <form method="post" action="/members/reject"><input type="hidden" name="account" value="{{.Account}}"><button class="button small secondary">拒絕</button></form>
+    </div>
+    {{end}}
   </div>
   {{end}}
+
+  <div class="card">
+    <h2>邀請朋友</h2>
+    {{if .Bot}}<p>把這個連結傳給朋友：<a href="https://t.me/{{.Bot}}" target="_blank" rel="noopener">https://t.me/{{.Bot}}</a></p>{{end}}
+    <div class="row">
+      <span>註冊模式</span>
+      <form method="post" action="/registration" class="seg">
+        {{range .Modes}}<button name="mode" value="{{.}}" class="{{if eq . $.Mode}}on{{end}}">{{index $.ModeNames .}}</button>{{end}}
+      </form>
+    </div>
+    <p class="muted">
+      {{if eq .Mode "approval"}}朋友傳訊息給 bot 後，會出現在這裡和你的 Telegram 等你允許。
+      {{else if eq .Mode "open"}}任何人傳訊息給 bot 都能直接使用。
+      {{else}}不接受新使用者，現有成員不受影響。{{end}}
+    </p>
+  </div>
 
   <div class="grid">
     <div class="card">
@@ -51,6 +73,49 @@
     </div>
   </div>
 
+  <div class="card" id="members">
+    <h2>成員（{{len .Members}}）</h2>
+    <datalist id="boards">{{range .BoardOptions}}<option value="{{.}}">{{end}}</datalist>
+    {{range .Members}}
+    <div class="member" id="m{{.Account}}">
+      <div class="row">
+        <div class="grow">
+          <b>{{.Name}}</b>{{if .Admin}} 👑{{end}}{{if not .Enabled}} <span class="bad">已封鎖 bot</span>{{end}}
+          <span class="muted">{{.Account}} · 推文追蹤 {{.Articles}} 篇</span>
+        </div>
+        {{if not .Admin}}
+        <form method="post" action="/members/remove" onsubmit="return confirm('確定移除 {{.Name}}？對方將無法再使用 bot。')">
+          <input type="hidden" name="account" value="{{.Account}}"><button class="button small secondary">移除</button>
+        </form>
+        {{end}}
+      </div>
+      {{$account := .Account}}
+      {{range .Subs}}
+      <div class="subs">
+        <span class="board">{{.Board}}</span>
+        {{$board := .Board}}
+        {{range .Keywords}}
+        <form method="post" action="/keywords" class="chip">
+          <input type="hidden" name="account" value="{{$account}}"><input type="hidden" name="action" value="刪除">
+          <input type="hidden" name="board" value="{{$board}}"><input type="hidden" name="keywords" value="{{.}}">
+          <span>{{.}}</span><button title="刪除 {{.}}" aria-label="刪除 {{.}}">×</button>
+        </form>
+        {{end}}
+      </div>
+      {{else}}
+      <div class="muted">還沒有關鍵字</div>
+      {{end}}
+      <form method="post" action="/keywords" class="add">
+        <input type="hidden" name="account" value="{{.Account}}"><input type="hidden" name="action" value="新增">
+        <input type="text" name="board" list="boards" placeholder="看板，例如 Stock" required autocomplete="off">
+        <input type="text" name="keywords" placeholder="關鍵字，多個用逗號分隔" required autocomplete="off">
+        <button class="button small">新增</button>
+      </form>
+    </div>
+    {{else}}<div class="muted">尚無成員。</div>{{end}}
+    <p class="muted">進階關鍵字：<code>台積電&amp;法說</code> 同時包含、<code>台積電&amp;!公告</code> 排除、<code>regexp:^\[新聞\]</code> 正規表示式。</p>
+  </div>
+
   <div class="card">
     <h2>看板（{{len .Boards}}）</h2>
     {{if .Boards}}
@@ -65,23 +130,7 @@
       </tr>
       {{end}}
     </table></div>
-    {{else}}<div class="muted">沒有巡邏中的看板，在 Telegram 傳「新增 看板 關鍵字」開始。</div>{{end}}
-  </div>
-
-  <div class="card">
-    <h2>成員（{{len .Members}}）</h2>
-    {{if .Members}}
-    <div class="table-wrap"><table>
-      <tr><th>使用者</th><th>關鍵字</th><th>推文追蹤</th></tr>
-      {{range .Members}}
-      <tr>
-        <td class="nowrap">{{.Name}}{{if .Admin}} 👑{{end}}{{if not .Enabled}} <span class="bad">已封鎖 bot</span>{{end}}<div class="muted">{{.Account}}</div></td>
-        <td class="pre">{{or .Keywords "（無）"}}</td>
-        <td class="nowrap">{{.Articles}} 篇</td>
-      </tr>
-      {{end}}
-    </table></div>
-    {{else}}<div class="muted">尚無成員。</div>{{end}}
+    {{else}}<div class="muted">沒有巡邏中的看板，在上面的成員區新增關鍵字就會開始。</div>{{end}}
   </div>
 
   <div class="card">
@@ -101,7 +150,29 @@
     {{else}}<div class="muted">尚未送出通知。</div>{{end}}
   </div>
 
+  <div class="card" id="backup">
+    <h2>備份與還原</h2>
+    <div class="row">
+      <a class="button small" href="/backup">⬇️ 下載備份</a>
+      <form method="post" action="/restore" enctype="multipart/form-data" class="row"
+            onsubmit="return confirm('確定用這個備份還原？目前的資料會被覆蓋。')">
+        <input type="file" name="file" accept=".json,application/json" required>
+        <button class="button small secondary">還原</button>
+      </form>
+    </div>
+    <p class="muted">備份檔裡可能有 bot token，請不要分享給別人。換電腦時，在新電腦設定完成後上傳備份即可。</p>
+  </div>
+
   <div class="muted">版本 {{.Version}} · 健康檢查：<a href="/health">/health</a> · <a href="https://github.com/JA1221/ptt-alertor/releases" target="_blank" rel="noopener">更新紀錄</a></div>
 </main>
+<script>
+  // refresh status, but not while typing or choosing a file
+  setInterval(function () {
+    var busy = Array.prototype.some.call(document.querySelectorAll('input[type=text], input[type=file]'), function (el) {
+      return el.value !== '' || el === document.activeElement;
+    });
+    if (!busy) location.replace('/' + location.hash);
+  }, 30000);
+</script>
 </body>
 </html>
