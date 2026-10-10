@@ -1,6 +1,8 @@
 package web
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"testing"
 	"time"
@@ -44,23 +46,21 @@ func Test_getYear(t *testing.T) {
 }
 
 func Test_checkURLExist(t *testing.T) {
-	type args struct {
-		url string
-	}
-	tests := []struct {
-		name string
-		args args
-		want bool
-	}{
-		{"found", args{"http://dinolai.com"}, true},
-		{"not found", args{"http://dinolai.tw"}, false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := checkURLExist(tt.args.url); got != tt.want {
-				t.Errorf("checkURLExist() = %v, want %v", got, tt.want)
-			}
-		})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/ok":
+		case "/redirect":
+			http.Redirect(w, r, "/ok", http.StatusFound)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	tests := map[string]bool{"/ok": true, "/redirect": true, "/missing": false}
+	for path, want := range tests {
+		if got := checkURLExist(srv.URL + path); got != want {
+			t.Errorf("checkURLExist(%s) = %v, want %v", path, got, want)
+		}
 	}
 }
 
@@ -108,6 +108,9 @@ func Test_makeArticleURL(t *testing.T) {
 }
 
 func Test_fetchHTML(t *testing.T) {
+	if testing.Short() {
+		t.Skip("connects ptt.cc")
+	}
 	type args struct {
 		reqURL string
 	}

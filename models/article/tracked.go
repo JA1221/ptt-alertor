@@ -92,9 +92,7 @@ func IsTracked(code string) (bool, error) {
 
 // TrackedCodes lists codes of tracked articles
 func TrackedCodes() ([]string, error) {
-	conn := connections.Redis()
-	defer conn.Close()
-	keys, err := redis.Strings(conn.Do("KEYS", prefix+"*"+subsSuffix))
+	keys, err := connections.Scan(prefix + "*" + subsSuffix)
 	if err != nil {
 		return nil, err
 	}

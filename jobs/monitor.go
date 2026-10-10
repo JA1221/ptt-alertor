@@ -4,35 +4,44 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strconv"
 	"time"
 
 	log "github.com/Ptt-Alertor/logrus"
 
+	"github.com/Ptt-Alertor/ptt-alertor/connections"
 	"github.com/Ptt-Alertor/ptt-alertor/health"
+	"github.com/Ptt-Alertor/ptt-alertor/models/access"
 	"github.com/Ptt-Alertor/ptt-alertor/notify"
 	pttHttp "github.com/Ptt-Alertor/ptt-alertor/ptt/http"
 )
 
 const pttURL = "https://www.ptt.cc/bbs/index.html"
 
-// PTTMonitor checks ptt.cc is reachable every minute
-type PTTMonitor struct {
+// Monitor checks ptt.cc and redis are reachable every minute
+type Monitor struct {
 	Health *health.Tracker
 	Client *http.Client
 }
 
-// Run checks PTT until ctx is done
-func (m *PTTMonitor) Run(ctx context.Context) {
+// Run checks until ctx is done
+func (m *Monitor) Run(ctx context.Context) {
 	loop(ctx, time.Minute, func(ctx context.Context) {
-		err := m.check(ctx)
+		err := m.checkPTT(ctx)
 		if err != nil {
 			log.WithError(err).Warn("PTT Unreachable")
 		}
 		m.Health.PTTChecked(err)
+
+		err = connections.PingRedis()
+		if err != nil {
+			log.WithError(err).Error("Redis Unreachable")
+		}
+		m.Health.RedisChecked(err)
 	})
 }
 
-func (m *PTTMonitor) check(ctx context.Context) error {
+func (m *Monitor) checkPTT(ctx context.Context) error {
 	req, err := pttHttp.HttpRequest(pttURL)
 	if err != nil {
 		return err
@@ -48,24 +57,32 @@ func (m *PTTMonitor) check(ctx context.Context) error {
 	return nil
 }
 
-// Alerter sends alerts and recoveries of health problems to owners
+// Alerter sends alerts and recoveries of health problems to admins
 type Alerter struct {
 	Health   *health.Tracker
 	Notifier notify.Notifier
-	// Owners are telegram chats receiving alerts
-	Owners []int64
 	// Interval is time between evaluations
 	Interval time.Duration
+	// admins is last known admins, alerts still reach them when redis is down
+	admins []string
 }
 
 // Run evaluates health until ctx is done
 func (a *Alerter) Run(ctx context.Context) {
 	loop(ctx, a.Interval, func(ctx context.Context) {
-		for _, msg := range a.Health.Evaluate() {
+		if admins, err := access.Admins(); err == nil {
+			a.admins = admins
+		}
+		msgs := a.Health.Evaluate()
+		for _, msg := range msgs {
 			log.WithField("message", msg).Warn("Health Alert")
-			for _, owner := range a.Owners {
-				notify.Deliver(a.Notifier, owner, msg, health.Notification{
-					Account: fmt.Sprint(owner),
+			for _, admin := range a.admins {
+				chatID, err := strconv.ParseInt(admin, 10, 64)
+				if err != nil {
+					continue
+				}
+				notify.Deliver(a.Notifier, chatID, notify.Text(msg), health.Notification{
+					Account: admin,
 					Kind:    health.KindAlert,
 					Summary: msg,
 				})

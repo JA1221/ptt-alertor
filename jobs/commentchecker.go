@@ -2,7 +2,7 @@ package jobs
 
 import (
 	"context"
-	"fmt"
+	"strings"
 	"time"
 
 	log "github.com/Ptt-Alertor/logrus"
@@ -95,12 +95,20 @@ func (c *CommentChecker) Check(code string) error {
 		return nil
 	}
 	log.WithFields(log.Fields{"board": saved.Board, "code": code, "count": len(news)}).Info("New Comments")
-	text := fmt.Sprintf("推文@%s\n\n%s\n%s\n\n%s", saved.Board, saved.Title, saved.Link, news.String())
-	c.send(saved, text)
+	c.send(saved, CommentsMessage(saved, news))
 	return nil
 }
 
-func (c *CommentChecker) send(a article.Article, text string) {
+// CommentsMessage formats new comments of article
+func CommentsMessage(a article.Article, comments article.Comments) notify.Message {
+	lines := []string{"💬 <b>" + notify.E(a.Board) + "</b>｜" + notify.Link(a.Title, a.Link), ""}
+	for _, c := range comments {
+		lines = append(lines, notify.E(c.String()))
+	}
+	return notify.Message{Text: strings.Join(lines, "\n")}
+}
+
+func (c *CommentChecker) send(a article.Article, msg notify.Message) {
 	accounts, err := article.Subscribers(a.Code)
 	if err != nil {
 		log.WithError(err).WithField("code", a.Code).Error("Get Article Subscribers Failed")
@@ -112,7 +120,10 @@ func (c *CommentChecker) send(a article.Article, text string) {
 			log.WithError(err).WithField("account", account).Error("Find User Failed")
 			continue
 		}
-		notify.Deliver(c.Notifier, u.ChatID(), text, health.Notification{
+		if !u.Enable {
+			continue
+		}
+		deliver(c.Notifier, u, msg, health.Notification{
 			Account: account,
 			Kind:    health.KindComment,
 			Board:   a.Board,
@@ -123,7 +134,7 @@ func (c *CommentChecker) send(a article.Article, text string) {
 
 func (c *CommentChecker) stop(a article.Article) error {
 	log.WithFields(log.Fields{"board": a.Board, "code": a.Code}).Info("Article Deleted, Stop Tracking")
-	c.send(a, fmt.Sprintf("文章已刪除，停止追蹤推文@%s\n\n%s\n%s", a.Board, a.Title, a.Link))
+	c.send(a, notify.Message{Text: "🗑 文章已刪除，停止追蹤推文\n<b>" + notify.E(a.Board) + "</b>｜" + notify.E(a.Title)})
 	accounts, err := article.Subscribers(a.Code)
 	if err != nil {
 		return err
@@ -133,7 +144,7 @@ func (c *CommentChecker) stop(a article.Article) error {
 			u.Subscribes.RemoveArticle(a.Code)
 			return nil
 		})
-		if err != nil {
+		if err != nil && err != user.ErrNotFound {
 			return err
 		}
 	}

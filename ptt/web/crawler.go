@@ -210,8 +210,15 @@ func CheckArticleExist(board, articleCode string) bool {
 	return checkURLExist(makeArticleURL(board, articleCode))
 }
 
+// existClient follows redirects, e.g. over 18 confirmation of some boards
+var existClient = &http.Client{Timeout: 15 * time.Second}
+
 func checkURLExist(url string) bool {
-	resp, err := http.Get(url)
+	req, err := pttHttp.HttpRequest(url)
+	if err != nil {
+		return false
+	}
+	resp, err := existClient.Do(req)
 	if err != nil {
 		return false
 	}

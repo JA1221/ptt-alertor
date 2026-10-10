@@ -13,7 +13,9 @@ func (c *clock) now() time.Time          { return c.t }
 func (c *clock) advance(d time.Duration) { c.t = c.t.Add(d) }
 func newTracker() (*Tracker, *clock) {
 	c := &clock{time.Date(2026, 10, 10, 0, 0, 0, 0, time.UTC)}
-	return newWithClock(c.now), c
+	tr := newWithClock(c.now)
+	tr.SetBot("bot")
+	return tr, c
 }
 func contains(msgs []string, s string) bool { return strings.Contains(strings.Join(msgs, "\n"), s) }
 
@@ -114,6 +116,27 @@ func TestSnapshotTelegramProblems(t *testing.T) {
 	tr.TelegramSent(nil)
 	if s := tr.Snapshot(); !s.Healthy() {
 		t.Fatalf("Problems = %v", s.Problems)
+	}
+}
+
+func TestSnapshotTelegramNotConnected(t *testing.T) {
+	tr := New()
+	if s := tr.Snapshot(); !contains(s.Problems, "Telegram 尚未連線") {
+		t.Fatalf("Problems = %v", s.Problems)
+	}
+}
+
+func TestRedisAlert(t *testing.T) {
+	tr, _ := newTracker()
+	for i := 0; i < PTTAlertFailures; i++ {
+		tr.RedisChecked(errFetch)
+	}
+	if msgs := tr.Evaluate(); len(msgs) != 1 || !contains(msgs, "Redis 無法連線") {
+		t.Fatalf("Evaluate() = %v", msgs)
+	}
+	tr.RedisChecked(nil)
+	if msgs := tr.Evaluate(); len(msgs) != 1 || !contains(msgs, "Redis 已恢復") {
+		t.Fatalf("Evaluate() = %v", msgs)
 	}
 }
 

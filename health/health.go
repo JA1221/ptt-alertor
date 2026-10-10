@@ -28,6 +28,12 @@ type boardState struct {
 	alerted      bool
 }
 
+type redisState struct {
+	failures  int
+	lastError string
+	alerted   bool
+}
+
 type pttState struct {
 	lastCheck time.Time
 	failures  int
@@ -36,6 +42,7 @@ type pttState struct {
 }
 
 type telegramState struct {
+	bot           string
 	lastSent      time.Time
 	lastSendError string
 	lastSendErrAt time.Time
@@ -57,6 +64,7 @@ type Tracker struct {
 	started  time.Time
 	boards   map[string]*boardState
 	ptt      pttState
+	redis    redisState
 	telegram telegramState
 	comments commentState
 }
@@ -132,6 +140,19 @@ func (t *Tracker) PTTChecked(err error) {
 	t.ptt.lastError = err.Error()
 }
 
+// RedisChecked records result of pinging redis
+func (t *Tracker) RedisChecked(err error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if err == nil {
+		t.redis.failures = 0
+		t.redis.lastError = ""
+		return
+	}
+	t.redis.failures++
+	t.redis.lastError = err.Error()
+}
+
 // TelegramSent records result of sending a message
 func (t *Tracker) TelegramSent(err error) {
 	t.mu.Lock()
@@ -143,6 +164,13 @@ func (t *Tracker) TelegramSent(err error) {
 	}
 	t.telegram.lastSendError = err.Error()
 	t.telegram.lastSendErrAt = t.now()
+}
+
+// SetBot records user name of the connected bot
+func (t *Tracker) SetBot(name string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.telegram.bot = name
 }
 
 // TelegramPolled records result of receiving updates
@@ -187,6 +215,15 @@ func (t *Tracker) Evaluate() (msgs []string) {
 	if t.ptt.failures == 0 && t.ptt.alerted {
 		t.ptt.alerted = false
 		msgs = append(msgs, "✅ PTT 已恢復連線")
+	}
+
+	if t.redis.failures >= PTTAlertFailures && !t.redis.alerted {
+		t.redis.alerted = true
+		msgs = append(msgs, "⚠️ Redis 無法連線："+t.redis.lastError)
+	}
+	if t.redis.failures == 0 && t.redis.alerted {
+		t.redis.alerted = false
+		msgs = append(msgs, "✅ Redis 已恢復連線")
 	}
 
 	for _, name := range t.boardNames() {
@@ -235,6 +272,8 @@ type Snapshot struct {
 	PTTLastCheck time.Time
 	PTTError     string
 
+	// Bot is user name of connected bot, empty before telegram is set up
+	Bot               string
 	TelegramLastSent  time.Time
 	TelegramSendError string
 	TelegramLastPoll  time.Time
@@ -262,6 +301,7 @@ func (t *Tracker) Snapshot() Snapshot {
 		Started:           t.started,
 		PTTLastCheck:      t.ptt.lastCheck,
 		PTTError:          t.ptt.lastError,
+		Bot:               t.telegram.bot,
 		TelegramLastSent:  t.telegram.lastSent,
 		TelegramSendError: t.telegram.lastSendError,
 		TelegramLastPoll:  t.telegram.lastPoll,
@@ -273,6 +313,12 @@ func (t *Tracker) Snapshot() Snapshot {
 
 	if t.ptt.failures > 0 {
 		s.Problems = append(s.Problems, "PTT 無法連線："+t.ptt.lastError)
+	}
+	if t.redis.failures > 0 {
+		s.Problems = append(s.Problems, "Redis 無法連線："+t.redis.lastError)
+	}
+	if t.telegram.bot == "" {
+		s.Problems = append(s.Problems, "Telegram 尚未連線")
 	}
 	if t.telegram.lastPollError != "" {
 		s.Problems = append(s.Problems, "Telegram 接收訊息失敗："+t.telegram.lastPollError)

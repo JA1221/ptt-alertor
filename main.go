@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"os"
 	"os/signal"
@@ -10,6 +11,7 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	_ "time/tzdata"
 
 	log "github.com/Ptt-Alertor/logrus"
 
@@ -19,6 +21,7 @@ import (
 	"github.com/Ptt-Alertor/ptt-alertor/connections"
 	"github.com/Ptt-Alertor/ptt-alertor/health"
 	"github.com/Ptt-Alertor/ptt-alertor/jobs"
+	"github.com/Ptt-Alertor/ptt-alertor/models/access"
 	"github.com/Ptt-Alertor/ptt-alertor/models/board"
 	"github.com/Ptt-Alertor/ptt-alertor/models/keyword"
 	pttweb "github.com/Ptt-Alertor/ptt-alertor/ptt/web"
@@ -30,12 +33,9 @@ func main() {
 	if err != nil {
 		log.WithError(err).Fatal("Config Invalid")
 	}
-	if len(cfg.AllowedIDs) == 0 {
-		log.Warn("TELEGRAM_ALLOWED_IDS Is Empty, Nobody Can Use the Bot. Send Any Message to the Bot to Get Your ID")
-	}
-	accounts := make([]string, 0, len(cfg.AllowedIDs))
-	for _, id := range cfg.AllowedIDs {
-		accounts = append(accounts, strconv.FormatInt(id, 10))
+	// docker healthcheck, the image has no shell or curl
+	if len(os.Args) > 1 && os.Args[1] == "healthcheck" {
+		os.Exit(healthcheck(cfg.HTTPAddr))
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -44,17 +44,39 @@ func main() {
 	if !waitRedis(ctx) {
 		return
 	}
-	// checking boards follow subscriptions of allowed users
-	if err := keyword.Sync(accounts); err != nil {
-		log.WithError(err).Fatal("Sync Keyword Index Failed")
+	if err := prepare(cfg); err != nil {
+		log.WithError(err).Fatal("Prepare Data Failed")
 	}
-	log.WithField("boards", board.List()).Info("Checking Boards")
 
 	tracker := health.New()
-	handler := command.NewHandler(accounts, tracker)
+	tokens := make(chan string, 1)
+	hasToken := func() bool {
+		if cfg.TelegramToken != "" {
+			return true
+		}
+		token, _ := access.Token()
+		return token != ""
+	}
 	srv := &http.Server{
-		Addr:              cfg.HTTPAddr,
-		Handler:           (&web.Server{Health: tracker, Accounts: accounts}).Handler(),
+		Addr: cfg.HTTPAddr,
+		Handler: (&web.Server{
+			Health:   tracker,
+			HasToken: hasToken,
+			SaveToken: func(token string) (string, error) {
+				name, err := telegram.Verify(token)
+				if err != nil {
+					return "", err
+				}
+				if err := access.SetToken(token); err != nil {
+					return "", err
+				}
+				select {
+				case tokens <- token:
+				default:
+				}
+				return name, nil
+			},
+		}).Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	go func() {
@@ -64,13 +86,54 @@ func main() {
 		}
 	}()
 
-	bot := connectTelegram(ctx, cfg, handler, tracker)
-	if bot == nil {
-		return
-	}
-	log.Info("Telegram Authorized on " + bot.UserName())
-
 	var wg sync.WaitGroup
+	if bot := connectTelegram(ctx, cfg, tokens, tracker); bot != nil {
+		start(ctx, &wg, bot, tracker)
+	}
+
+	<-ctx.Done()
+	log.Info("Shutting Down")
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	srv.Shutdown(shutdownCtx)
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	// telegram long polling may not return until its timeout
+	select {
+	case <-done:
+	case <-shutdownCtx.Done():
+		log.Warn("Jobs Not Stopped in Time")
+	}
+	log.Info("Bye")
+}
+
+// prepare migrates data of older versions and rebuilds keyword index from members
+func prepare(cfg config.Config) error {
+	if err := access.Migrate(); err != nil {
+		return err
+	}
+	for _, id := range cfg.AdminIDs {
+		if err := access.AddAdmin(strconv.FormatInt(id, 10)); err != nil {
+			return err
+		}
+	}
+	members, err := access.Members()
+	if err != nil {
+		return err
+	}
+	if err := keyword.Rebuild(members); err != nil {
+		return err
+	}
+	log.WithFields(log.Fields{"members": len(members), "boards": len(board.List())}).Info("Data Ready")
+	return nil
+}
+
+func start(ctx context.Context, wg *sync.WaitGroup, bot *telegram.Bot, tracker *health.Tracker) {
+	handler := command.NewHandler(tracker, bot)
+	bot.SetHandler(handler.Handle)
 	run := func(f func(ctx context.Context)) {
 		wg.Add(1)
 		go func() {
@@ -93,34 +156,15 @@ func main() {
 		Interval:     1 * time.Second,
 		Cycle:        time.Minute,
 	}).Run)
-	run((&jobs.PTTMonitor{
+	run((&jobs.Monitor{
 		Health: tracker,
 		Client: &http.Client{Timeout: 30 * time.Second},
 	}).Run)
 	run((&jobs.Alerter{
 		Health:   tracker,
 		Notifier: bot,
-		Owners:   cfg.AllowedIDs,
 		Interval: 30 * time.Second,
 	}).Run)
-
-	<-ctx.Done()
-	log.Info("Shutting Down")
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	srv.Shutdown(shutdownCtx)
-	done := make(chan struct{})
-	go func() {
-		wg.Wait()
-		close(done)
-	}()
-	// telegram long polling may not return until its timeout
-	select {
-	case <-done:
-	case <-shutdownCtx.Done():
-		log.Warn("Jobs Not Stopped in Time")
-	}
-	log.Info("Bye")
 }
 
 // waitRedis waits until redis is reachable, false when ctx is done first
@@ -139,22 +183,63 @@ func waitRedis(ctx context.Context) bool {
 	}
 }
 
-// connectTelegram retries until connected, nil when ctx is done first
-func connectTelegram(ctx context.Context, cfg config.Config, handler *command.Handler, tracker *health.Tracker) *telegram.Bot {
+// connectTelegram waits for a token (env, saved or from setup page) and retries until connected,
+// nil when ctx is done first
+func connectTelegram(ctx context.Context, cfg config.Config, tokens <-chan string, tracker *health.Tracker) *telegram.Bot {
+	token := cfg.TelegramToken
+	if token == "" {
+		token, _ = access.Token()
+	}
+	if token == "" {
+		log.Warn("Telegram Not Set Up, Open http://localhost:9090 to Set Up")
+		select {
+		case <-ctx.Done():
+			return nil
+		case token = <-tokens:
+		}
+	}
 	for {
-		bot, err := telegram.New(cfg.TelegramToken, cfg.AllowedIDs, handler.Handle, tracker)
+		bot, err := telegram.New(token, nil, tracker)
 		if err == nil {
+			tracker.SetBot(bot.UserName())
+			log.Info("Telegram Authorized on " + bot.UserName())
 			return bot
 		}
-		if strings.Contains(err.Error(), "Unauthorized") {
-			log.WithError(err).Fatal("TELEGRAM_TOKEN Invalid")
-		}
 		tracker.TelegramPolled(err)
+		if strings.Contains(err.Error(), "Unauthorized") && cfg.TelegramToken == "" {
+			// e.g. token revoked by BotFather, setup page asks a new one
+			log.WithError(err).Error("Telegram Token Invalid, Open http://localhost:9090 to Set Up Again")
+			if err := access.SetToken(""); err != nil {
+				log.WithError(err).Error("Clear Telegram Token Failed")
+			}
+			select {
+			case <-ctx.Done():
+				return nil
+			case token = <-tokens:
+			}
+			continue
+		}
 		log.WithError(err).Error("Telegram Connect Failed, Retry")
 		select {
 		case <-ctx.Done():
 			return nil
-		case <-time.After(10 * time.Second):
+		case token = <-tokens:
+		case <-time.After(30 * time.Second):
 		}
 	}
+}
+
+func healthcheck(addr string) int {
+	port := addr[strings.LastIndex(addr, ":")+1:]
+	client := http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Get("http://127.0.0.1:" + port + "/healthz")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return 1
+	}
+	return 0
 }

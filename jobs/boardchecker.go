@@ -2,7 +2,8 @@ package jobs
 
 import (
 	"context"
-	"fmt"
+	"sort"
+	"strings"
 	"time"
 
 	log "github.com/Ptt-Alertor/logrus"
@@ -53,8 +54,8 @@ func (c *BoardChecker) round(ctx context.Context) {
 	}
 }
 
-// Check fetches board, saves articles and notifies subscribers of new articles,
-// the first fetch only saves articles as base of comparison
+// Check fetches board and notifies subscribers of new articles,
+// articles are saved only when changed, the first fetch only saves them as base of comparison
 func (c *BoardChecker) Check(name string) error {
 	online, err := c.Fetch(name)
 	if err != nil {
@@ -67,16 +68,16 @@ func (c *BoardChecker) Check(name string) error {
 	if err != nil {
 		return err
 	}
-	if err := board.SaveArticles(name, online); err != nil {
-		return err
-	}
 	if saved == nil {
 		log.WithField("board", name).Info("Board Articles Created")
-		return nil
+		return board.SaveArticles(name, online)
 	}
 	news := board.NewArticles(saved, online)
 	if len(news) == 0 {
 		return nil
+	}
+	if err := board.SaveArticles(name, online); err != nil {
+		return err
 	}
 	log.WithFields(log.Fields{"board": name, "count": len(news)}).Info("New Articles")
 	c.notify(name, news)
@@ -84,6 +85,7 @@ func (c *BoardChecker) Check(name string) error {
 }
 
 func (c *BoardChecker) notify(name string, news article.Articles) {
+	sort.SliceStable(news, func(i, j int) bool { return news[i].ID < news[j].ID })
 	accounts, err := keyword.Subscribers(name)
 	if err != nil {
 		log.WithError(err).WithField("board", name).Error("Get Keyword Subscribers Failed")
@@ -95,19 +97,51 @@ func (c *BoardChecker) notify(name string, news article.Articles) {
 			log.WithError(err).WithField("account", account).Error("Find User Failed")
 			continue
 		}
+		if !u.Enable {
+			continue
+		}
 		sub, _ := u.Subscribes.Find(name)
-		for _, kw := range sub.Keywords {
-			matched := news.Match(kw)
-			if len(matched) == 0 {
-				continue
+		keywords, matched := match(sub.Keywords, news)
+		if len(matched) == 0 {
+			continue
+		}
+		deliver(c.Notifier, u, ArticlesMessage(name, keywords, matched), health.Notification{
+			Account: account,
+			Kind:    health.KindKeyword,
+			Board:   name,
+			Summary: strings.Join(keywords, "、") + "：" + matched[0].Title,
+		})
+	}
+}
+
+// match returns keywords having matches and articles matching any keyword, each article once
+func match(keywords []string, articles article.Articles) (hit []string, matched article.Articles) {
+	hitKeyword := make(map[string]bool)
+	for _, a := range articles {
+		var ok bool
+		for _, kw := range keywords {
+			if a.MatchKeyword(kw) {
+				ok = true
+				hitKeyword[kw] = true
 			}
-			text := fmt.Sprintf("「%s」@%s\n\n%s", kw, sub.Board, matched.String())
-			notify.Deliver(c.Notifier, u.ChatID(), text, health.Notification{
-				Account: account,
-				Kind:    health.KindKeyword,
-				Board:   sub.Board,
-				Summary: kw + "：" + matched[0].Title,
-			})
+		}
+		if ok {
+			matched = append(matched, a)
 		}
 	}
+	for _, kw := range keywords {
+		if hitKeyword[kw] {
+			hit = append(hit, kw)
+		}
+	}
+	return hit, matched
+}
+
+// ArticlesMessage formats new articles of board matching keywords
+func ArticlesMessage(boardName string, keywords []string, articles article.Articles) notify.Message {
+	lines := []string{"🔔 <b>" + notify.E(boardName) + "</b>｜" + notify.E(strings.Join(keywords, "、")), ""}
+	for _, a := range articles {
+		lines = append(lines, notify.Link(a.Title, a.Link))
+	}
+	return notify.Message{Text: strings.Join(lines, "\n")}
 }

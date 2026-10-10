@@ -1,5 +1,7 @@
-FROM golang:1.23-alpine AS builder
+# builds on the host platform and cross compiles, fast for multi-arch images
+FROM --platform=$BUILDPLATFORM golang:1.23-alpine AS builder
 
+RUN apk add --no-cache ca-certificates
 WORKDIR /src
 ENV CGO_ENABLED=0
 
@@ -8,13 +10,16 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
-RUN go build -trimpath -ldflags="-s -w" -o /ptt-alertor .
+ARG TARGETOS TARGETARCH
+RUN GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w" -o /ptt-alertor .
 
-FROM alpine:3.20
+# about 10MB: the binary, certificates, and time zones embedded in the binary
+FROM scratch
 
-RUN apk add --no-cache ca-certificates tzdata
-
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 COPY --from=builder /ptt-alertor /ptt-alertor
 
+ENV TZ=Asia/Taipei
 EXPOSE 9090
+HEALTHCHECK --interval=1m --timeout=10s --start-period=30s CMD ["/ptt-alertor", "healthcheck"]
 ENTRYPOINT ["/ptt-alertor"]

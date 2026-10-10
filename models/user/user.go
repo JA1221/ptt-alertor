@@ -34,6 +34,16 @@ type Profile struct {
 	Account      string `json:"account"`
 	Telegram     string `json:"telegram"`
 	TelegramChat int64  `json:"telegramChat"`
+	// Name is telegram display name, shown to admins
+	Name string `json:"name,omitempty"`
+}
+
+// DisplayName is name or account when name is unknown
+func (u User) DisplayName() string {
+	if u.Profile.Name != "" {
+		return u.Profile.Name
+	}
+	return u.Profile.Account
 }
 
 // ChatID is telegram chat to send messages, private chat id equals user id
@@ -62,9 +72,7 @@ func Find(account string) (u User, err error) {
 
 // Accounts lists registered accounts
 func Accounts() ([]string, error) {
-	conn := connections.Redis()
-	defer conn.Close()
-	keys, err := redis.Strings(conn.Do("KEYS", prefix+"*"))
+	keys, err := connections.Scan(prefix + "*")
 	if err != nil {
 		return nil, err
 	}
@@ -104,8 +112,9 @@ func Update(account string, fn func(u *User) error) error {
 	return save(u)
 }
 
-// Register creates user or updates its telegram chat
-func Register(account string, chatID int64) error {
+// Register creates user or updates its telegram chat and name, and enables it,
+// changed reports anything was saved
+func Register(account string, chatID int64, name string) (changed bool, err error) {
 	mu.Lock()
 	defer mu.Unlock()
 	u, err := Find(account)
@@ -115,9 +124,22 @@ func Register(account string, chatID int64) error {
 			Profile:    Profile{Account: account, Telegram: account},
 		}
 	} else if err != nil {
-		return err
+		return false, err
+	} else if u.Enable && u.Profile.TelegramChat == chatID && (name == "" || u.Profile.Name == name) {
+		return false, nil
 	}
 	u.Enable = true
 	u.Profile.TelegramChat = chatID
-	return save(u)
+	if name != "" {
+		u.Profile.Name = name
+	}
+	return true, save(u)
+}
+
+// Disable stops notifications to user, e.g. the user blocked the bot
+func Disable(account string) error {
+	return Update(account, func(u *User) error {
+		u.Enable = false
+		return nil
+	})
 }

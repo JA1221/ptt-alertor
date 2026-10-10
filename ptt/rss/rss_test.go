@@ -3,6 +3,9 @@ package rss
 import "testing"
 
 func TestCheckBoardExist(t *testing.T) {
+	if testing.Short() {
+		t.Skip("connects ptt.cc")
+	}
 	type args struct {
 		board string
 	}

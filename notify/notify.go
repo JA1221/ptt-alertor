@@ -1,7 +1,9 @@
-// Package notify sends messages to users and records sent notifications
+// Package notify defines messages sent to users and records sent notifications
 package notify
 
 import (
+	"errors"
+	"html"
 	"time"
 
 	log "github.com/Ptt-Alertor/logrus"
@@ -9,27 +11,62 @@ import (
 	"github.com/Ptt-Alertor/ptt-alertor/health"
 )
 
-// Notifier sends text to a chat
-type Notifier interface {
-	Send(chatID int64, text string) error
+// ErrUnreachable means the chat can not receive messages, e.g. user blocked the bot
+var ErrUnreachable = errors.New("chat unreachable")
+
+// Button is an inline button, it runs Data as callback or opens URL
+type Button struct {
+	Text string
+	Data string
+	URL  string
 }
 
-// Deliver sends text, and records it in recent notifications when sent
-func Deliver(n Notifier, chatID int64, text string, record health.Notification) error {
-	if err := n.Send(chatID, text); err != nil {
-		log.WithError(err).WithFields(log.Fields{
-			"account": record.Account,
-			"kind":    record.Kind,
-			"board":   record.Board,
-		}).Error("Notification Not Sent")
+// Message is a HTML message, dynamic content must be escaped by E
+type Message struct {
+	Text    string
+	Buttons [][]Button
+	// Keyboard shows main reply keyboard, ignored when Buttons exist
+	Keyboard bool
+	// Edit replaces the message whose button was pressed
+	Edit bool
+}
+
+// Text makes plain text message
+func Text(s string) Message {
+	return Message{Text: E(s)}
+}
+
+// E escapes text for HTML messages
+func E(s string) string {
+	return html.EscapeString(s)
+}
+
+// Link makes HTML link
+func Link(text, url string) string {
+	if url == "" {
+		return E(text)
+	}
+	return `<a href="` + E(url) + `">` + E(text) + `</a>`
+}
+
+// Notifier sends message to a chat
+type Notifier interface {
+	Send(chatID int64, msg Message) error
+}
+
+// Deliver sends message, and records it in recent notifications when sent
+func Deliver(n Notifier, chatID int64, msg Message, record health.Notification) error {
+	fields := log.Fields{
+		"account": record.Account,
+		"kind":    record.Kind,
+		"board":   record.Board,
+	}
+	if err := n.Send(chatID, msg); err != nil {
+		log.WithError(err).WithFields(fields).Error("Notification Not Sent")
 		return err
 	}
 	record.Time = time.Now()
 	health.Record(record)
-	log.WithFields(log.Fields{
-		"account": record.Account,
-		"kind":    record.Kind,
-		"board":   record.Board,
-	}).Info("Notification Sent")
+	log.WithFields(fields).Info("Notification Sent")
 	return nil
 }

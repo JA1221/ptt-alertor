@@ -1,19 +1,19 @@
 package config
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"strconv"
 	"strings"
 )
 
-// Config is app settings from environment variables
+// Config is app settings from environment variables, all optional
 type Config struct {
+	// TelegramToken overrides token saved by setup page
 	TelegramToken string
-	// AllowedIDs are telegram user ids allowed to use the bot
-	AllowedIDs []int64
-	HTTPAddr   string
+	// AdminIDs are telegram user ids made admins on start
+	AdminIDs []int64
+	HTTPAddr string
 }
 
 // Load reads config from environment variables
@@ -25,14 +25,16 @@ func Load() (Config, error) {
 	if cfg.HTTPAddr == "" {
 		cfg.HTTPAddr = ":9090"
 	}
-	if cfg.TelegramToken == "" {
-		return cfg, errors.New("TELEGRAM_TOKEN is required")
+	// TELEGRAM_ALLOWED_IDS is the name used by older versions
+	ids := os.Getenv("TELEGRAM_ADMIN_IDS")
+	if ids == "" {
+		ids = os.Getenv("TELEGRAM_ALLOWED_IDS")
 	}
-	ids, err := ParseIDs(os.Getenv("TELEGRAM_ALLOWED_IDS"))
+	admins, err := ParseIDs(ids)
 	if err != nil {
 		return cfg, err
 	}
-	cfg.AllowedIDs = ids
+	cfg.AdminIDs = admins
 	return cfg, nil
 }
 
@@ -46,7 +48,7 @@ func ParseIDs(s string) ([]int64, error) {
 		}
 		id, err := strconv.ParseInt(field, 10, 64)
 		if err != nil {
-			return nil, fmt.Errorf("TELEGRAM_ALLOWED_IDS has invalid id %q", field)
+			return nil, fmt.Errorf("invalid telegram id %q", field)
 		}
 		ids = append(ids, id)
 	}

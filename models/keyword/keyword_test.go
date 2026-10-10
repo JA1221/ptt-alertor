@@ -16,13 +16,13 @@ func TestMain(m *testing.M) {
 	os.Exit(redistest.Run(m))
 }
 
-func subscribe(t *testing.T, account, boardName string, keywords ...string) {
+func edit(t *testing.T, account string, fn func(u *user.User)) {
 	t.Helper()
-	if err := user.Register(account, 0); err != nil {
+	if _, err := user.Register(account, 0, ""); err != nil {
 		t.Fatal(err)
 	}
 	err := user.Update(account, func(u *user.User) error {
-		u.Subscribes.AddKeywords(boardName, keywords)
+		fn(u)
 		return nil
 	})
 	if err != nil {
@@ -30,11 +30,29 @@ func subscribe(t *testing.T, account, boardName string, keywords ...string) {
 	}
 }
 
-func TestSync(t *testing.T) {
+func subscribe(t *testing.T, account, boardName string, keywords ...string) {
+	t.Helper()
+	edit(t, account, func(u *user.User) { u.Subscribes.AddKeywords(boardName, keywords) })
+}
+
+func subscribers(boardName string) []string {
+	subs, _ := Subscribers(boardName)
+	sort.Strings(subs)
+	return subs
+}
+
+func boards() []string {
+	list := board.List()
+	sort.Strings(list)
+	return list
+}
+
+func TestRebuild(t *testing.T) {
 	redistest.Flush()
 	subscribe(t, "1", "stock", "a")
 	subscribe(t, "2", "Stock", "b")
 	subscribe(t, "2", "joke", "c")
+	subscribe(t, "3", "movie", "d")
 	if err := board.Add("old"); err != nil {
 		t.Fatal(err)
 	}
@@ -42,41 +60,62 @@ func TestSync(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := Sync([]string{"1", "2", "404"}); err != nil {
+	// 3 is not a member
+	if err := Rebuild([]string{"1", "2", "404"}); err != nil {
 		t.Fatal(err)
 	}
-	subs, _ := Subscribers("STOCK")
-	sort.Strings(subs)
-	if !reflect.DeepEqual(subs, []string{"1", "2"}) {
-		t.Errorf("stock subscribers = %v", subs)
+	if got := subscribers("STOCK"); !reflect.DeepEqual(got, []string{"1", "2"}) {
+		t.Errorf("stock subscribers = %v", got)
 	}
-	boards := board.List()
-	sort.Strings(boards)
-	if !reflect.DeepEqual(boards, []string{"joke", "stock"}) {
-		t.Errorf("boards = %v", boards)
+	if got := boards(); !reflect.DeepEqual(got, []string{"joke", "stock"}) {
+		t.Errorf("boards = %v", got)
 	}
 	if saved, _ := board.SavedArticles("old"); saved != nil {
 		t.Error("saved articles of unsubscribed board should be removed")
 	}
+}
+
+func TestUpdate(t *testing.T) {
+	redistest.Flush()
+	subscribe(t, "1", "stock", "a")
+	subscribe(t, "2", "stock", "b")
+	subscribe(t, "2", "joke", "c")
+	if err := Rebuild([]string{"1", "2"}); err != nil {
+		t.Fatal(err)
+	}
 
 	// last keyword of joke removed
-	err := user.Update("2", func(u *user.User) error {
-		u.Subscribes.RemoveKeywords("joke", []string{"*"})
-		return nil
-	})
-	if err != nil {
+	edit(t, "2", func(u *user.User) { u.Subscribes.RemoveKeywords("joke", []string{"*"}) })
+	subscribe(t, "2", "movie", "d")
+	if err := Update("2", true); err != nil {
 		t.Fatal(err)
 	}
-	if err := Sync([]string{"1"}); err != nil {
+	if got := boards(); !reflect.DeepEqual(got, []string{"movie", "stock"}) {
+		t.Errorf("boards = %v", got)
+	}
+	if got := subscribers("joke"); len(got) != 0 {
+		t.Errorf("joke subscribers = %v", got)
+	}
+
+	// removed member keeps subscriptions but is not checked
+	if err := Update("2", false); err != nil {
 		t.Fatal(err)
 	}
-	if subs, _ := Subscribers("joke"); len(subs) != 0 {
-		t.Errorf("joke subscribers = %v", subs)
+	if got := boards(); !reflect.DeepEqual(got, []string{"stock"}) {
+		t.Errorf("boards = %v", got)
 	}
-	if subs, _ := Subscribers("stock"); !reflect.DeepEqual(subs, []string{"1"}) {
-		t.Errorf("accounts not allowed should be dropped, stock subscribers = %v", subs)
+	if got := subscribers("stock"); !reflect.DeepEqual(got, []string{"1"}) {
+		t.Errorf("stock subscribers = %v", got)
 	}
-	if boards := board.List(); !reflect.DeepEqual(boards, []string{"stock"}) {
-		t.Errorf("boards = %v", boards)
+
+	// disabled user (blocked the bot) is not checked
+	if err := user.Disable("1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := Update("1", true); err != nil {
+		t.Fatal(err)
+	}
+	if got := boards(); len(got) != 0 {
+		t.Errorf("boards = %v", got)
 	}
 }

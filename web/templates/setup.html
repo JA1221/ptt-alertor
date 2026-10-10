@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+{{template "head"}}
+{{if and (eq .Step 2) (not .ClaimLink)}}<meta http-equiv="refresh" content="3">{{end}}
+{{if .ClaimLink}}<meta http-equiv="refresh" content="10">{{end}}
+<title>Ptt Alertor 設定</title>
+</head>
+<body>
+<main class="narrow">
+  <h1>Ptt Alertor 設定</h1>
+  <div class="muted">兩個步驟就能開始使用</div>
+
+  <div class="steps">
+    <span class="{{if eq .Step 1}}on{{else}}done{{end}}">{{if gt .Step 1}}✓ {{end}}1. 建立 bot</span>
+    <span class="{{if eq .Step 2}}on{{end}}">2. 認領管理員</span>
+  </div>
+
+  {{if eq .Step 1}}
+  <div class="card">
+    <h2>建立你的 Telegram bot</h2>
+    <ol>
+      <li>在 Telegram 打開 <a href="https://t.me/BotFather" target="_blank" rel="noopener">@BotFather</a></li>
+      <li>傳送 <code>/newbot</code>，依指示輸入 bot 名稱與帳號（帳號要以 <code>bot</code> 結尾）</li>
+      <li>BotFather 會回覆一串 token，例如 <code>123456789:AAH...</code>，複製貼到下面</li>
+    </ol>
+    {{if .Error}}<div class="banner bad">{{.Error}}</div>{{end}}
+    <form method="post" action="/setup/token">
+      <input type="text" name="token" placeholder="貼上 token" autocomplete="off" required autofocus>
+      <button class="button" type="submit">下一步</button>
+    </form>
+    <p class="muted">token 只會存在這台電腦的資料庫，不會傳到其他地方。</p>
+  </div>
+  {{else if not .ClaimLink}}
+  <div class="card">
+    <h2>正在連線 Telegram…</h2>
+    <p class="muted">頁面會自動更新。</p>
+  </div>
+  {{else}}
+  <div class="card">
+    <h2>認領管理員</h2>
+    <p>bot <b>@{{.Bot}}</b> 已連線。點下面的按鈕，在 Telegram 按「開始」就會成為管理員。</p>
+    <p><a class="button" href="{{.ClaimLink}}" target="_blank" rel="noopener">在 Telegram 開啟</a></p>
+    <p class="muted">按鈕沒反應的話，在手機或電腦的 Telegram 搜尋 <b>@{{.Bot}}</b>，傳送：<br><code>/start {{.ClaimCode}}</code></p>
+    <p class="muted">認領完成後這個頁面會自動變成狀態頁。認領連結只能用一次，請不要分享給別人。</p>
+  </div>
+  {{end}}
+</main>
+</body>
+</html>

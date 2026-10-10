@@ -1,100 +1,120 @@
-# Ptt-Alertor（精簡版）
+# Ptt Alertor
 
-<img align="right" src="https://raw.githubusercontent.com/Ptt-Alertor/ptt-alertor/master/logo.jpg">
+<img align="right" width="120" src="logo.jpg">
 
-自己用的 PTT 關鍵字通知 Telegram bot，在本機以 docker compose 執行（app + Redis）。
+PTT 關鍵字通知 Telegram bot。自己架、分享給朋友用，不用寫程式。
 
-* 關鍵字通知：看板有新文章標題符合關鍵字時通知，支援 `&`（同時包含）、`!`（排除）、`regexp:`（正規表示式）
-* 推文追蹤：追蹤的文章有新推文時傳推文內容，文章刪除時通知並停止追蹤
-* 監控：Telegram `狀態`、`測試 看板` 指令、瀏覽器狀態頁、`/health`；看板持續抓取失敗或 PTT 無法連線時主動通知
+- 🔔 看板有新文章標題符合關鍵字就通知，支援「同時包含」「排除」「正規表示式」
+- 💬 追蹤文章推文，有新推文就傳內容
+- 👥 朋友傳訊息給 bot → 你按「允許」就能用
+- 📊 狀態頁、異常主動通知，壞了會知道
 
-## 執行
+## 三步驟架設
 
-需求：Docker Desktop（含 docker compose）
+**1. 安裝 Docker Desktop**
 
-1. 向 [@BotFather](https://t.me/BotFather) 申請 bot token
-2. 建立設定檔並填入 `TELEGRAM_TOKEN`
+到 [docker.com](https://www.docker.com/products/docker-desktop/) 下載安裝（Windows / macOS）。Linux 安裝 Docker Engine 即可。
 
-   ```sh
-   cp .env.example .env
-   ```
+**2. 下載並啟動**
 
-3. 啟動
+按這個頁面上方綠色的 **Code → Download ZIP**，解壓縮後：
 
-   ```sh
-   docker compose up -d --build
-   ```
+- Windows：雙擊 `start.bat`
+- macOS / Linux：在資料夾開終端機執行 `./start.sh`
 
-4. 在 Telegram 對 bot 傳任意訊息，bot 會回覆你的 Telegram ID。
-   把它填入 `.env` 的 `TELEGRAM_ALLOWED_IDS`（多人以逗號分隔），再執行一次 `docker compose up -d`
+**3. 照網頁指示設定**
 
-| 環境變數 | 說明 |
+瀏覽器會自動打開 <http://localhost:9090>：
+
+1. 在 Telegram 找 [@BotFather](https://t.me/BotFather)，傳 `/newbot` 建立 bot，把拿到的 token 貼到網頁
+2. 點「在 Telegram 開啟」→ 按「開始」，你就是管理員了
+
+完成！在 Telegram 傳 `新增 stock 台積電` 試試看。
+
+> 想讓電腦開機後自動執行：Docker Desktop → Settings → General → 勾選「Start Docker Desktop when you sign in」。
+
+## 分享給朋友
+
+把 bot 連結 `https://t.me/你的bot帳號` 傳給朋友（狀態頁上也有）。朋友傳訊息給 bot 時，你會在 Telegram 收到「✅ 允許／❌ 拒絕」按鈕。
+
+| 管理員指令 | 說明 |
 |---|---|
-| `TELEGRAM_TOKEN` | bot token（必填） |
-| `TELEGRAM_ALLOWED_IDS` | 可使用 bot 的 Telegram ID，逗號分隔；其他人傳訊息只會收到自己的 ID |
-| `TZ` | 狀態頁時區，預設 `Asia/Taipei` |
+| `使用者` | 成員與待審核清單，可按鈕移除或核准 |
+| `註冊 審核` | 陌生人要經過你同意（預設） |
+| `註冊 開放` | 任何人都能直接使用 |
+| `註冊 關閉` | 不接受新使用者 |
 
-* 狀態頁：<http://localhost:9090>（只綁定本機，每 30 秒自動更新）
-* 健康檢查：<http://localhost:9090/health>，全部正常回 200，有異常回 503
-* 看 log：`docker compose logs -f app`
-* 資料存在 docker volume `redis-data`（`docker compose down -v` 會清空）
+每人上限：20 個看板、每個看板 20 個關鍵字、50 篇推文追蹤。
 
-## 指令
+## 使用方式
+
+下方鍵盤有「清單、推文清單、狀態、指令」按鈕，清單裡每個關鍵字都能直接按鈕刪除。
 
 | 指令 | 說明 |
 |---|---|
-| `指令` | 指令清單 |
-| `清單` | 設定的看板與關鍵字 |
-| `新增 看板 關鍵字` | 例：`新增 gossiping,movie 金城武,結衣`；任一看板不存在時不會做任何變更 |
-| `刪除 看板 關鍵字` | 關鍵字為 `*` 時刪除該看板全部關鍵字（會先確認） |
-| `新增推文 網址` / `刪除推文 網址` | 追蹤文章推文，最多 50 篇 |
-| `推文清單` / `清理推文` | 列出追蹤文章 / 移除已失效的追蹤 |
-| `狀態` | PTT、Telegram、各看板、推文追蹤的狀態 |
-| `測試 看板` | 立即抓取看板最新文章，以你的關鍵字比對並回覆結果（不影響通知） |
+| `新增 看板 關鍵字` | 例：`新增 gossiping,movie 金城武,結衣`（逗號分隔多個） |
+| `刪除 看板 關鍵字` | 關鍵字填 `*` 刪除該看板全部 |
+| 貼上文章網址 | 一鍵追蹤推文 |
+| `推文清單`、`清理推文` | 管理追蹤中的文章 |
+| `狀態` | PTT、看板、推文追蹤是否正常 |
+| `測試 看板` | 立刻抓最新文章並用你的關鍵字比對（不影響通知） |
 
-關鍵字範例：`台積電&法說`（同時包含）、`台積電&!公告`（包含台積電但不含公告）、`regexp:^\[新聞\]`。
+關鍵字進階：`台積電&法說`（同時包含）、`台積電&!公告`（排除公告）、`regexp:^\[新聞\]`（正規表示式）。
 
-## 異常通知
+## 常見問題
 
-送給所有 `TELEGRAM_ALLOWED_IDS`，每次事件只通知一次，恢復時再通知一次：
+**更新到最新版？** 再執行一次 `start.bat` / `start.sh`。
 
-* 看板連續抓取失敗 10 分鐘
-* PTT 連續 3 次（每分鐘檢查一次）無法連線，期間不另發看板警告
+**停止？** 執行 `stop.bat`，或 `docker compose stop`。資料會保留。
+
+**資料存在哪？** Docker volume `ptt-alertor_redis-data`。`docker compose down -v` 會全部清除。
+
+**換 bot token？** 在 `.env` 設定 `TELEGRAM_TOKEN=新token` 後重新執行 start；或在 BotFather 撤銷舊 token，程式會自動回到設定頁。
+
+**9090 port 被占用？** 建立 `.env` 寫入 `PORT=9091`，網址改成 <http://localhost:9091>。
+
+**出問題了？**
+- 狀態頁 <http://localhost:9090> 會列出問題；看板連續失敗 10 分鐘或 PTT 連不上時，bot 會通知管理員
+- 看紀錄：`docker compose logs -f app`
+
+## 進階設定
+
+複製 `.env.example` 為 `.env`，全部都可以不填：
+
+| 變數 | 說明 |
+|---|---|
+| `TELEGRAM_TOKEN` | bot token，填了就不用在網頁設定 |
+| `TELEGRAM_ADMIN_IDS` | 管理員 Telegram ID，逗號分隔，填了就不用在網頁認領 |
+| `PORT` | 網頁 port，預設 9090 |
+| `TZ` | 時區，預設 `Asia/Taipei` |
+
+狀態頁只開放本機連線。架在遠端伺服器時，用 SSH tunnel 開啟：`ssh -L 9090:localhost:9090 你的伺服器`。
 
 ## 開發
 
 ```sh
-docker run --rm -v "$PWD:/src" -w /src golang:1.23-alpine go test ./...
+docker compose up -d --build          # 用本機程式碼建置並啟動
+docker run --rm -v "$PWD:/src" -w /src golang:1.23 go test -race -short ./...
 ```
 
-`ptt/rss`、`ptt/web` 部分測試會連線 ptt.cc。
+推送到 `master` 時，GitHub Actions 會跑測試並建置 amd64/arm64 映像檔到 `ghcr.io/<owner>/<repo>`。
 
 ```
 main.go               設定、組裝、HTTP server、優雅關閉
 config/               環境變數
 connections/          Redis 連線池
 ptt/{http,rss,web}    PTT 抓取與解析
-models/               文章、看板、關鍵字索引、訂閱、使用者（Redis）
-command/              指令解析與處理
-notify/               Notifier 介面
-channels/telegram/    bot：白名單、依序處理更新、送出重試
+models/               文章、看板、關鍵字索引、訂閱、使用者、權限（Redis）
+command/              指令與按鈕處理
+notify/               訊息格式與 Notifier 介面
+channels/telegram/    bot：依使用者分流、送出重試、封鎖偵測
 health/               健康狀態、異常判斷、最近通知
-jobs/                 看板檢查、推文追蹤、PTT 監控、異常通知
-web/                  狀態頁、/health
+jobs/                 看板檢查、推文追蹤、PTT/Redis 監控、異常通知
+web/                  設定精靈、狀態頁、/health
 ```
 
 ## Credits
 
-原專案：[Ptt-Alertor/ptt-alertor](https://github.com/Ptt-Alertor/ptt-alertor)
+改自 [Ptt-Alertor/ptt-alertor](https://github.com/Ptt-Alertor/ptt-alertor)（Apache-2.0）。
 
-### Real Life
-
-Rose Li, Aries Huang, Scott Kao, Amy Li
-
-### Ptt
-
-DMM, oas, bestpika, Zero0910, lucky0509, wbreeze, chang0206, lindo0130, hungys, gyman7788, tooilxui, myamyakoko, whkuo, papago89, timeline, Kamikiri
-
-### Facebook
-
-Mr.clu, Woqeker
+原專案感謝名單 — Real Life：Rose Li, Aries Huang, Scott Kao, Amy Li；Ptt：DMM, oas, bestpika, Zero0910, lucky0509, wbreeze, chang0206, lindo0130, hungys, gyman7788, tooilxui, myamyakoko, whkuo, papago89, timeline, Kamikiri；Facebook：Mr.clu, Woqeker

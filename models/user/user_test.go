@@ -40,8 +40,11 @@ func TestFindNotFound(t *testing.T) {
 
 func TestRegisterAndUpdate(t *testing.T) {
 	redistest.Flush()
-	if err := Register("1", 1); err != nil {
-		t.Fatal(err)
+	if changed, err := Register("1", 1, "小明"); err != nil || !changed {
+		t.Fatal(changed, err)
+	}
+	if changed, _ := Register("1", 1, "小明"); changed {
+		t.Error("nothing changed")
 	}
 	err := Update("1", func(u *User) error {
 		u.Subscribes.AddKeywords("stock", []string{"a"})
@@ -54,12 +57,29 @@ func TestRegisterAndUpdate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !u.Enable || u.Profile.Account != "1" || u.ChatID() != 1 || len(u.Subscribes) != 1 {
+	if !u.Enable || u.Profile.Account != "1" || u.ChatID() != 1 || len(u.Subscribes) != 1 || u.DisplayName() != "小明" {
 		t.Errorf("user = %+v", u)
 	}
 	accounts, err := Accounts()
 	if err != nil || len(accounts) != 1 || accounts[0] != "1" {
 		t.Errorf("Accounts() = %v, %v", accounts, err)
+	}
+}
+
+func TestDisableAndRegisterAgain(t *testing.T) {
+	redistest.Flush()
+	Register("1", 1, "")
+	if err := Disable("1"); err != nil {
+		t.Fatal(err)
+	}
+	if u, _ := Find("1"); u.Enable {
+		t.Error("user should be disabled")
+	}
+	if changed, _ := Register("1", 1, ""); !changed {
+		t.Error("register should enable user again")
+	}
+	if u, _ := Find("1"); !u.Enable || u.DisplayName() != "1" {
+		t.Errorf("user = %+v", u)
 	}
 }
 

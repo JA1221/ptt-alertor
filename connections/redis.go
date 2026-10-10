@@ -49,3 +49,25 @@ func PingRedis() error {
 	_, err := conn.Do("PING")
 	return err
 }
+
+// Scan lists keys matching pattern without blocking redis like KEYS does
+func Scan(pattern string) ([]string, error) {
+	conn := Redis()
+	defer conn.Close()
+	var keys []string
+	cursor := 0
+	for {
+		reply, err := redis.Values(conn.Do("SCAN", cursor, "MATCH", pattern, "COUNT", 500))
+		if err != nil {
+			return nil, err
+		}
+		var batch []string
+		if _, err := redis.Scan(reply, &cursor, &batch); err != nil {
+			return nil, err
+		}
+		keys = append(keys, batch...)
+		if cursor == 0 {
+			return keys, nil
+		}
+	}
+}

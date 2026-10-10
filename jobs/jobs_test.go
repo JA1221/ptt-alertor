@@ -2,6 +2,7 @@ package jobs
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"sync"
@@ -12,6 +13,7 @@ import (
 	"github.com/Ptt-Alertor/ptt-alertor/models/article"
 	"github.com/Ptt-Alertor/ptt-alertor/models/keyword"
 	"github.com/Ptt-Alertor/ptt-alertor/models/user"
+	"github.com/Ptt-Alertor/ptt-alertor/notify"
 	"github.com/Ptt-Alertor/ptt-alertor/ptt/web"
 )
 
@@ -27,22 +29,23 @@ type message struct {
 type fakeNotifier struct {
 	mu   sync.Mutex
 	sent []message
-	err  error
+	// blocked chats return notify.ErrUnreachable
+	blocked map[int64]bool
 }
 
-func (n *fakeNotifier) Send(chatID int64, text string) error {
+func (n *fakeNotifier) Send(chatID int64, msg notify.Message) error {
 	n.mu.Lock()
 	defer n.mu.Unlock()
-	if n.err != nil {
-		return n.err
+	if n.blocked[chatID] {
+		return fmt.Errorf("%w: Forbidden: bot was blocked by the user", notify.ErrUnreachable)
 	}
-	n.sent = append(n.sent, message{chatID, text})
+	n.sent = append(n.sent, message{chatID, msg.Text})
 	return nil
 }
 
 func register(t *testing.T, account string, chatID int64, fn func(u *user.User)) {
 	t.Helper()
-	if err := user.Register(account, chatID); err != nil {
+	if _, err := user.Register(account, chatID, ""); err != nil {
 		t.Fatal(err)
 	}
 	err := user.Update(account, func(u *user.User) error {
@@ -55,14 +58,14 @@ func register(t *testing.T, account string, chatID int64, fn func(u *user.User))
 }
 
 func a(id int, title string) article.Article {
-	return article.Article{ID: id, Title: title, Link: "https://www.ptt.cc/bbs/stock/M." + title + ".html"}
+	return article.Article{ID: id, Title: title, Link: fmt.Sprintf("https://www.ptt.cc/bbs/stock/M.%d.A.1.html", id)}
 }
 
 func TestBoardCheckerNotifiesMatchedKeywords(t *testing.T) {
 	redistest.Flush()
 	register(t, "1", 11, func(u *user.User) { u.Subscribes.AddKeywords("stock", []string{"台積電", "regexp:^\\[新聞\\]"}) })
 	register(t, "2", 22, func(u *user.User) { u.Subscribes.AddKeywords("stock", []string{"聯發科"}) })
-	if err := keyword.Sync([]string{"1", "2"}); err != nil {
+	if err := keyword.Rebuild([]string{"1", "2"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -84,21 +87,21 @@ func TestBoardCheckerNotifiesMatchedKeywords(t *testing.T) {
 	if err := c.Check("stock"); err != nil {
 		t.Fatal(err)
 	}
-	if len(n.sent) != 2 {
-		t.Fatalf("sent %d messages, want 2: %v", len(n.sent), n.sent)
+	// one message per user and board, each article once
+	if len(n.sent) != 1 || n.sent[0].chatID != 11 {
+		t.Fatalf("sent %v", n.sent)
 	}
-	for _, m := range n.sent {
-		if m.chatID != 11 {
-			t.Errorf("message to %d, want 11", m.chatID)
-		}
+	text := n.sent[0].text
+	if strings.Count(text, "[新聞] 台積電法說") != 1 || !strings.Contains(text, "[閒聊] 台積電") || strings.Contains(text, "盤中") {
+		t.Errorf("message = %q", text)
 	}
-	if !strings.Contains(n.sent[0].text, "[新聞] 台積電法說") || !strings.Contains(n.sent[0].text, "[閒聊] 台積電") {
-		t.Errorf("台積電 message = %q", n.sent[0].text)
+	if !strings.HasPrefix(text, `🔔 <b>stock</b>｜台積電、regexp:^\[新聞\]`) {
+		t.Errorf("header = %q", text)
 	}
-	if strings.Contains(n.sent[1].text, "[閒聊] 台積電") || !strings.Contains(n.sent[1].text, "[新聞] 台積電法說") {
-		t.Errorf("regexp message = %q", n.sent[1].text)
+	if strings.Index(text, "台積電法說") > strings.Index(text, "[閒聊] 台積電") {
+		t.Error("articles should be ordered by id")
 	}
-	if recent := health.Recent(); len(recent) != 2 || recent[0].Kind != health.KindKeyword {
+	if recent := health.Recent(); len(recent) != 1 || recent[0].Kind != health.KindKeyword {
 		t.Errorf("recent notifications = %v", recent)
 	}
 
@@ -106,6 +109,34 @@ func TestBoardCheckerNotifiesMatchedKeywords(t *testing.T) {
 	n.sent = nil
 	if err := c.Check("stock"); err != nil || len(n.sent) != 0 {
 		t.Errorf("Check() = %v, sent %v", err, n.sent)
+	}
+}
+
+func TestBoardCheckerDisablesBlockedUser(t *testing.T) {
+	redistest.Flush()
+	register(t, "1", 11, func(u *user.User) { u.Subscribes.AddKeywords("stock", []string{"a"}) })
+	if err := keyword.Rebuild([]string{"1"}); err != nil {
+		t.Fatal(err)
+	}
+	online := article.Articles{a(1, "a")}
+	n := &fakeNotifier{blocked: map[int64]bool{11: true}}
+	c := &BoardChecker{
+		Fetch:    func(string) (article.Articles, error) { return online, nil },
+		Notifier: n,
+		Health:   health.New(),
+	}
+	c.Check("stock")
+	online = append(online, a(2, "a"))
+	c.Check("stock")
+
+	if u, _ := user.Find("1"); u.Enable {
+		t.Error("blocked user should be disabled")
+	}
+	if subs, _ := keyword.Subscribers("stock"); len(subs) != 0 {
+		t.Errorf("subscribers = %v", subs)
+	}
+	if s := c.Health.Snapshot(); strings.Contains(strings.Join(s.Problems, ""), "送出") {
+		t.Errorf("blocked user is not a telegram problem: %v", s.Problems)
 	}
 }
 
@@ -218,7 +249,7 @@ func TestCommentCheckerStopsDeletedArticle(t *testing.T) {
 	if err := c.Check("M.3.A.3"); err != nil {
 		t.Fatal(err)
 	}
-	if len(n.sent) != 2 || !strings.Contains(n.sent[0].text, "文章已刪除") {
+	if len(n.sent) != 2 || !strings.Contains(n.sent[0].text, "文章已刪除") || !strings.Contains(n.sent[0].text, "<b>stock</b>") {
 		t.Errorf("sent %v", n.sent)
 	}
 	if _, ok := article.Find("M.3.A.3"); ok {

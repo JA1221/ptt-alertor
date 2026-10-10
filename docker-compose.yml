@@ -1,6 +1,11 @@
-# usage: cp .env.example .env && docker compose up -d --build
+# 啟動：docker compose up -d（或執行 start.bat / start.sh）
+# 設定頁：http://localhost:9090
+name: ptt-alertor
+
 services:
   app:
+    # prebuilt image, built from source when it can not be pulled
+    image: ghcr.io/ja1221/ptt-alertor:latest
     build: .
     restart: unless-stopped
     depends_on:
@@ -13,22 +18,26 @@ services:
       REDIS_PORT: "6379"
       TZ: ${TZ:-Asia/Taipei}
     ports:
-      # status page, local only
-      - "127.0.0.1:9090:9090"
-    healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9090/health"]
-      interval: 1m
-      timeout: 10s
-      start_period: 1m
+      # setup and status page, this computer only
+      - "127.0.0.1:${PORT:-9090}:9090"
+    mem_limit: 128m
+    logging:
+      options:
+        max-size: 10m
+        max-file: "3"
 
   redis:
     image: redis:7.2-alpine
     restart: unless-stopped
-    command: redis-server --appendonly yes
+    # append only file keeps data across restarts, snapshots are not needed
+    command: redis-server --appendonly yes --save "" --maxmemory 64mb --maxmemory-policy noeviction
     volumes:
       - redis-data:/data
-    ports:
-      - "127.0.0.1:6379:6379"
+    mem_limit: 96m
+    logging:
+      options:
+        max-size: 10m
+        max-file: "3"
 
 volumes:
   redis-data:
