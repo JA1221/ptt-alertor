@@ -53,10 +53,6 @@ func (a Article) MatchKeyword(keyword string) bool {
 	return matchKeyword(a.Title, keyword)
 }
 
-func (a Article) String() string {
-	return a.Title + "\n" + a.Link
-}
-
 func matchRegex(title string, regex string) bool {
 	b, err := regexp.MatchString(strings.TrimPrefix(regex, "regexp:"), title)
 	return err == nil && b
@@ -85,12 +81,4 @@ func (as Articles) Match(keyword string) Articles {
 		}
 	}
 	return matched
-}
-
-func (as Articles) String() string {
-	strs := make([]string, 0, len(as))
-	for _, a := range as {
-		strs = append(strs, a.String())
-	}
-	return strings.Join(strs, "\n\n")
 }

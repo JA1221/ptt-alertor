@@ -14,10 +14,10 @@ import (
 	"github.com/Ptt-Alertor/ptt-alertor/notify"
 )
 
-var modeNames = map[string]string{
-	access.ModeApproval: "審核",
-	access.ModeOpen:     "開放",
-	access.ModeClosed:   "關閉",
+var modeDescriptions = map[string]string{
+	access.ModeApproval: "陌生人傳訊息時，你會收到是否允許的按鈕。",
+	access.ModeOpen:     "任何人傳訊息給 bot 都能直接使用。",
+	access.ModeClosed:   "不接受新使用者，現有成員不受影響。",
 }
 
 // stranger handles input of non-member by registration mode
@@ -60,7 +60,7 @@ func (h *Handler) stranger(in Input) (notify.Message, error) {
 	}
 	log.WithField("account", in.Account).Info("Member Requested")
 	request := notify.Message{
-		Text: fmt.Sprintf("🙋 <b>%s</b>（%s）想使用這個 bot", notify.E(displayName(in.Name, in.Account)), notify.E(in.Account)),
+		Text: fmt.Sprintf("🙋 <b>%s</b>（%s）想使用這個 bot", notify.E(nameOf(in.Account)), notify.E(in.Account)),
 		Buttons: buttonRow(
 			button("✅ 允許", cbApprove+in.Account),
 			button("❌ 拒絕", cbReject+in.Account),
@@ -70,13 +70,6 @@ func (h *Handler) stranger(in Input) (notify.Message, error) {
 		h.send(admin, request)
 	}
 	return notify.Text("📨 已送出使用申請，管理員同意後會通知你。"), nil
-}
-
-func displayName(name, account string) string {
-	if name == "" {
-		return account
-	}
-	return name
 }
 
 // send sends message to account, errors are logged
@@ -166,9 +159,11 @@ func (h *Handler) users(edit bool) (notify.Message, error) {
 	msg := notify.Message{Edit: edit}
 	lines := []string{fmt.Sprintf("👥 <b>成員</b>（%d）", len(members))}
 	for _, account := range members {
+		name := account
 		line := "• " + notify.E(account)
 		if u, err := user.Find(account); err == nil {
-			line = fmt.Sprintf("• %s（%s）看板 %d、推文 %d", notify.E(u.DisplayName()), notify.E(account),
+			name = u.DisplayName()
+			line = fmt.Sprintf("• %s（%s）看板 %d、推文 %d", notify.E(name), notify.E(account),
 				len(u.Subscribes.KeywordBoards()), u.Subscribes.ArticleCount())
 			if !u.Enable {
 				line += "、已封鎖 bot"
@@ -177,23 +172,24 @@ func (h *Handler) users(edit bool) (notify.Message, error) {
 		if isAdmin[account] {
 			line += " 👑"
 		} else if len(msg.Buttons) < maxListButtons {
-			msg.Buttons = append(msg.Buttons, buttonRow(button("🚫 移除 "+truncate(nameOf(account), 20), cbRemoveUser+account))...)
+			msg.Buttons = append(msg.Buttons, buttonRow(button("🚫 移除 "+truncate(name, 20), cbRemoveUser+account))...)
 		}
 		lines = append(lines, line)
 	}
 	if len(pending) > 0 {
 		lines = append(lines, "", fmt.Sprintf("⏳ <b>待審核</b>（%d）", len(pending)))
 		for _, account := range pending {
-			lines = append(lines, "• "+notify.E(nameOf(account))+"（"+notify.E(account)+"）")
+			name := nameOf(account)
+			lines = append(lines, "• "+notify.E(name)+"（"+notify.E(account)+"）")
 			if len(msg.Buttons) < maxListButtons {
 				msg.Buttons = append(msg.Buttons, buttonRow(
-					button("✅ 允許 "+truncate(nameOf(account), 12), cbApprove+account),
+					button("✅ 允許 "+truncate(name, 12), cbApprove+account),
 					button("❌ 拒絕", cbReject+account),
 				)...)
 			}
 		}
 	}
-	lines = append(lines, "", "註冊模式："+modeNames[mode]+"（<code>註冊 審核</code>／<code>註冊 開放</code>／<code>註冊 關閉</code>）")
+	lines = append(lines, "", "註冊模式："+access.ModeNames[mode]+"（<code>註冊 審核</code>／<code>註冊 開放</code>／<code>註冊 關閉</code>）")
 	msg.Text = strings.Join(lines, "\n")
 	return msg, nil
 }
@@ -206,17 +202,14 @@ func nameOf(account string) string {
 }
 
 func (h *Handler) setRegistration(name string) (notify.Message, error) {
-	for mode, n := range modeNames {
-		if n == name {
-			if err := access.SetRegistration(mode); err != nil {
-				return notify.Message{}, err
-			}
+	for mode, n := range access.ModeNames {
+		if n != name {
+			continue
 		}
+		if err := access.SetRegistration(mode); err != nil {
+			return notify.Message{}, err
+		}
+		return notify.Text("✅ 註冊模式：" + name + "\n" + modeDescriptions[mode]), nil
 	}
-	descriptions := map[string]string{
-		"審核": "陌生人傳訊息時，你會收到是否允許的按鈕。",
-		"開放": "任何人傳訊息給 bot 都能直接使用。",
-		"關閉": "不接受新使用者，現有成員不受影響。",
-	}
-	return notify.Text("✅ 註冊模式：" + name + "\n" + descriptions[name]), nil
+	return notify.Text("格式錯誤。範例：註冊 審核、註冊 開放、註冊 關閉"), nil
 }

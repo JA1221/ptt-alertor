@@ -49,9 +49,8 @@ func TestArticles(t *testing.T) {
 	if ss.ArticleCount() != 2 || !ss.HasArticle("M.1.A.1") {
 		t.Errorf("subscriptions = %v", ss)
 	}
-	want := "joke:\nhttps://www.ptt.cc/bbs/joke/M.2.A.2.html\nstock:\nhttps://www.ptt.cc/bbs/stock/M.1.A.1.html"
-	if got := ss.StringArticles(); got != want {
-		t.Errorf("StringArticles() = %q", got)
+	if sorted := ss.Sorted(); sorted[0].Board != "joke" || sorted[1].Board != "stock" {
+		t.Errorf("Sorted() = %v", sorted)
 	}
 	if !ss.RemoveArticle("M.2.A.2") || ss.RemoveArticle("M.2.A.2") {
 		t.Error("RemoveArticle should report tracked only once")

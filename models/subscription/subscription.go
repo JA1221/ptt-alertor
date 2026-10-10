@@ -125,7 +125,8 @@ func (ss Subscriptions) KeywordBoards() []string {
 	return boards
 }
 
-func (ss Subscriptions) sorted() Subscriptions {
+// Sorted is a copy sorted by board name
+func (ss Subscriptions) Sorted() Subscriptions {
 	sorted := make(Subscriptions, len(ss))
 	copy(sorted, ss)
 	sort.Slice(sorted, func(i, j int) bool {
@@ -137,26 +138,10 @@ func (ss Subscriptions) sorted() Subscriptions {
 // StringKeywords lists keywords per board, one board a line
 func (ss Subscriptions) StringKeywords() string {
 	var lines []string
-	for _, s := range ss.sorted() {
+	for _, s := range ss.Sorted() {
 		if len(s.Keywords) > 0 {
 			lines = append(lines, s.Board+": "+strings.Join(s.Keywords, ", "))
 		}
 	}
 	return strings.Join(lines, "\n")
-}
-
-// StringArticles lists links of tracked articles grouped by board
-func (ss Subscriptions) StringArticles() string {
-	var blocks []string
-	for _, s := range ss.sorted() {
-		if len(s.Articles) == 0 {
-			continue
-		}
-		lines := []string{s.Board + ":"}
-		for _, code := range s.Articles {
-			lines = append(lines, ArticleURL(s.Board, code))
-		}
-		blocks = append(blocks, strings.Join(lines, "\n"))
-	}
-	return strings.Join(blocks, "\n")
 }

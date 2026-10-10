@@ -22,14 +22,6 @@ func (c Comment) String() string {
 // Comments is a list of comment
 type Comments []Comment
 
-func (cs Comments) String() string {
-	strs := make([]string, 0, len(cs))
-	for _, c := range cs {
-		strs = append(strs, c.String())
-	}
-	return strings.Join(strs, "\n")
-}
-
 // NewComments returns comments of online article added after saved article was checked,
 // comments are compared by count because ptt comment time is only precise to minute
 func NewComments(saved, online Article) Comments {

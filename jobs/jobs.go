@@ -52,16 +52,24 @@ func safely(ctx context.Context, round func(ctx context.Context)) {
 	round(ctx)
 }
 
-// deliver sends message to user, users who blocked the bot are disabled
-func deliver(n notify.Notifier, u user.User, msg notify.Message, record health.Notification) {
-	err := notify.Deliver(n, u.ChatID(), msg, record)
-	if errors.Is(err, notify.ErrUnreachable) {
-		Disable(u.Profile.Account)
+// enabledUser finds user to notify, false when not found or disabled
+func enabledUser(account string) (user.User, bool) {
+	u, err := user.Find(account)
+	if err != nil {
+		log.WithError(err).WithField("account", account).Error("Find User Failed")
+		return u, false
 	}
+	return u, u.Enable
 }
 
-// Disable stops notifying account until it talks to the bot again
-func Disable(account string) {
+// deliver sends message to user, users who blocked the bot are disabled
+// until they talk to the bot again
+func deliver(n notify.Notifier, u user.User, msg notify.Message, record health.Notification) {
+	err := notify.Deliver(n, u.ChatID(), msg, record)
+	if !errors.Is(err, notify.ErrUnreachable) {
+		return
+	}
+	account := u.Profile.Account
 	log.WithField("account", account).Warn("User Unreachable, Disabled")
 	if err := user.Disable(account); err != nil {
 		log.WithError(err).WithField("account", account).Error("Disable User Failed")

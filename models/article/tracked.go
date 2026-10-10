@@ -83,13 +83,6 @@ func Subscribers(code string) ([]string, error) {
 	return redis.Strings(conn.Do("SMEMBERS", prefix+code+subsSuffix))
 }
 
-// IsTracked reports anyone tracks article
-func IsTracked(code string) (bool, error) {
-	conn := connections.Redis()
-	defer conn.Close()
-	return redis.Bool(conn.Do("EXISTS", prefix+code+subsSuffix))
-}
-
 // TrackedCodes lists codes of tracked articles
 func TrackedCodes() ([]string, error) {
 	keys, err := connections.Scan(prefix + "*" + subsSuffix)

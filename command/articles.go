@@ -87,7 +87,7 @@ func (h *Handler) articleList(account string, edit bool) (notify.Message, error)
 		return msg, nil
 	}
 	lines := []string{fmt.Sprintf("💬 <b>推文追蹤</b>（%d/%d）", u.Subscribes.ArticleCount(), MaxArticles)}
-	for _, s := range sortedSubs(u.Subscribes) {
+	for _, s := range u.Subscribes.Sorted() {
 		for _, code := range s.Articles {
 			title := code
 			link := subscription.ArticleURL(s.Board, code)

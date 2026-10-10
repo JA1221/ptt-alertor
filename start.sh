@@ -28,13 +28,15 @@ echo "啟動中（沒有現成映像檔時會自動編譯，約需幾分鐘）..
 docker compose up -d --remove-orphans
 
 echo "等待服務就緒..."
+# PORT in .env changes the port
+port=$(docker compose port app 9090 2>/dev/null | sed 's/.*://')
+url=http://localhost:${port:-9090}
 i=0
-until curl -fs http://localhost:9090/healthz >/dev/null 2>&1 || [ $i -ge 30 ]; do
+until curl -fs "$url/healthz" >/dev/null 2>&1 || [ $i -ge 30 ]; do
   i=$((i + 1))
   sleep 2
 done
 
-url=http://localhost:9090
 if command -v open >/dev/null 2>&1; then open "$url"; elif command -v xdg-open >/dev/null 2>&1; then xdg-open "$url" >/dev/null 2>&1 || true; fi
 echo
 echo "完成！打開 $url 設定或查看狀態（第一次會是設定頁）。"

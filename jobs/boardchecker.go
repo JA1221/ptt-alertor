@@ -12,7 +12,6 @@ import (
 	"github.com/Ptt-Alertor/ptt-alertor/models/article"
 	"github.com/Ptt-Alertor/ptt-alertor/models/board"
 	"github.com/Ptt-Alertor/ptt-alertor/models/keyword"
-	"github.com/Ptt-Alertor/ptt-alertor/models/user"
 	"github.com/Ptt-Alertor/ptt-alertor/notify"
 	"github.com/Ptt-Alertor/ptt-alertor/ptt/rss"
 )
@@ -92,12 +91,8 @@ func (c *BoardChecker) notify(name string, news article.Articles) {
 		return
 	}
 	for _, account := range accounts {
-		u, err := user.Find(account)
-		if err != nil {
-			log.WithError(err).WithField("account", account).Error("Find User Failed")
-			continue
-		}
-		if !u.Enable {
+		u, ok := enabledUser(account)
+		if !ok {
 			continue
 		}
 		sub, _ := u.Subscribes.Find(name)

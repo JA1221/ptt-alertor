@@ -13,7 +13,7 @@ COPY . .
 ARG TARGETOS TARGETARCH
 RUN GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w" -o /ptt-alertor .
 
-# about 10MB: the binary, certificates, and time zones embedded in the binary
+# about 15MB: the binary with embedded time zones, and certificates
 FROM scratch
 
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/

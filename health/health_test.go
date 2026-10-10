@@ -56,7 +56,7 @@ func TestPTTDownSuppressesBoardAlerts(t *testing.T) {
 	tr, c := newTracker()
 	tr.SetBoards([]string{"stock"})
 	tr.BoardChecked("stock", errFetch)
-	for i := 0; i < PTTAlertFailures; i++ {
+	for i := 0; i < AlertFailures; i++ {
 		c.advance(5 * time.Minute)
 		tr.PTTChecked(errFetch)
 	}
@@ -128,7 +128,7 @@ func TestSnapshotTelegramNotConnected(t *testing.T) {
 
 func TestRedisAlert(t *testing.T) {
 	tr, _ := newTracker()
-	for i := 0; i < PTTAlertFailures; i++ {
+	for i := 0; i < AlertFailures; i++ {
 		tr.RedisChecked(errFetch)
 	}
 	if msgs := tr.Evaluate(); len(msgs) != 1 || !contains(msgs, "Redis 無法連線") {

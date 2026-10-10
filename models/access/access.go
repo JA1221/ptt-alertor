@@ -30,6 +30,13 @@ const (
 	ModeClosed   = "closed"
 )
 
+// ModeNames are names of registration modes shown to users
+var ModeNames = map[string]string{
+	ModeApproval: "審核",
+	ModeOpen:     "開放",
+	ModeClosed:   "關閉",
+}
+
 func do(cmd string, args ...interface{}) (interface{}, error) {
 	conn := connections.Redis()
 	defer conn.Close()
@@ -44,11 +51,6 @@ func IsAdmin(account string) (bool, error) {
 // IsMember reports account can use the bot, admins are members
 func IsMember(account string) (bool, error) {
 	return redis.Bool(do("SISMEMBER", membersKey, account))
-}
-
-// IsPending reports account is waiting for approval
-func IsPending(account string) (bool, error) {
-	return redis.Bool(do("SISMEMBER", pendingKey, account))
 }
 
 // Admins lists admin accounts

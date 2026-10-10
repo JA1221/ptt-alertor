@@ -36,14 +36,17 @@ if errorlevel 1 (
 )
 
 echo 等待服務就緒...
+rem PORT in .env changes the port
+set URL=http://localhost:9090
+for /f "tokens=2 delims=:" %%p in ('docker compose port app 9090 2^>nul') do set URL=http://localhost:%%p
 for /l %%i in (1,1,30) do (
-  curl -fs http://localhost:9090/healthz >nul 2>nul && goto ready
+  curl -fs %URL%/healthz >nul 2>nul && goto ready
   timeout /t 2 /nobreak >nul
 )
 :ready
-start "" http://localhost:9090
+start "" %URL%
 echo.
-echo 完成！瀏覽器會打開 http://localhost:9090 （第一次會是設定頁）
+echo 完成！瀏覽器會打開 %URL% （第一次會是設定頁）
 echo 這個視窗可以關掉，bot 會在背景持續執行。
 echo 想要開機自動執行：Docker Desktop 設定 ^> General ^> 勾選 Start Docker Desktop when you sign in
 echo 更新到最新版：再執行一次這個檔案。

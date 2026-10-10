@@ -12,8 +12,8 @@ import (
 const (
 	// BoardAlertAfter alerts when a board keeps failing this long
 	BoardAlertAfter = 10 * time.Minute
-	// PTTAlertFailures alerts when PTT monitor fails this many times in a row (once a minute)
-	PTTAlertFailures = 3
+	// AlertFailures alerts when PTT or redis check fails this many times in a row (once a minute)
+	AlertFailures = 3
 	// boardProblemAfter marks status unhealthy when a board keeps failing this long
 	boardProblemAfter = 2 * time.Minute
 	// stalledAfter marks status unhealthy when checking stops
@@ -28,27 +28,47 @@ type boardState struct {
 	alerted      bool
 }
 
-type redisState struct {
+// probe is a dependency checked once a minute
+type probe struct {
+	name      string
 	failures  int
 	lastError string
 	alerted   bool
 }
 
-type pttState struct {
-	lastCheck time.Time
-	failures  int
-	lastError string
-	alerted   bool
+func (p *probe) record(err error) {
+	if err == nil {
+		p.failures = 0
+		p.lastError = ""
+		return
+	}
+	p.failures++
+	p.lastError = err.Error()
+}
+
+func (p *probe) down() bool {
+	return p.failures >= AlertFailures
+}
+
+// evaluate returns alert or recovery message when state changed, empty otherwise
+func (p *probe) evaluate() string {
+	switch {
+	case p.down() && !p.alerted:
+		p.alerted = true
+		return fmt.Sprintf("⚠️ %s 無法連線（已連續 %d 分鐘）：%s", p.name, p.failures, p.lastError)
+	case p.failures == 0 && p.alerted:
+		p.alerted = false
+		return "✅ " + p.name + " 已恢復連線"
+	}
+	return ""
 }
 
 type telegramState struct {
 	bot           string
 	lastSent      time.Time
 	lastSendError string
-	lastSendErrAt time.Time
 	lastPoll      time.Time
 	lastPollError string
-	lastPollErrAt time.Time
 }
 
 type commentState struct {
@@ -59,14 +79,15 @@ type commentState struct {
 
 // Tracker keeps health states in memory, it is safe for concurrent use
 type Tracker struct {
-	mu       sync.Mutex
-	now      func() time.Time
-	started  time.Time
-	boards   map[string]*boardState
-	ptt      pttState
-	redis    redisState
-	telegram telegramState
-	comments commentState
+	mu           sync.Mutex
+	now          func() time.Time
+	started      time.Time
+	boards       map[string]*boardState
+	ptt          probe
+	pttLastCheck time.Time
+	redis        probe
+	telegram     telegramState
+	comments     commentState
 }
 
 // New creates a Tracker
@@ -79,6 +100,8 @@ func newWithClock(now func() time.Time) *Tracker {
 		now:     now,
 		started: now(),
 		boards:  make(map[string]*boardState),
+		ptt:     probe{name: "PTT"},
+		redis:   probe{name: "Redis"},
 	}
 }
 
@@ -130,27 +153,15 @@ func (t *Tracker) BoardChecked(name string, err error) {
 func (t *Tracker) PTTChecked(err error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	t.ptt.lastCheck = t.now()
-	if err == nil {
-		t.ptt.failures = 0
-		t.ptt.lastError = ""
-		return
-	}
-	t.ptt.failures++
-	t.ptt.lastError = err.Error()
+	t.pttLastCheck = t.now()
+	t.ptt.record(err)
 }
 
 // RedisChecked records result of pinging redis
 func (t *Tracker) RedisChecked(err error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if err == nil {
-		t.redis.failures = 0
-		t.redis.lastError = ""
-		return
-	}
-	t.redis.failures++
-	t.redis.lastError = err.Error()
+	t.redis.record(err)
 }
 
 // TelegramSent records result of sending a message
@@ -163,7 +174,6 @@ func (t *Tracker) TelegramSent(err error) {
 		return
 	}
 	t.telegram.lastSendError = err.Error()
-	t.telegram.lastSendErrAt = t.now()
 }
 
 // SetBot records user name of the connected bot
@@ -183,7 +193,6 @@ func (t *Tracker) TelegramPolled(err error) {
 		return
 	}
 	t.telegram.lastPollError = err.Error()
-	t.telegram.lastPollErrAt = t.now()
 }
 
 // CommentsChecked records a round of comment checking
@@ -198,38 +207,22 @@ func (t *Tracker) CommentsChecked(tracked int, err error) {
 	}
 }
 
-func (t *Tracker) pttDown() bool {
-	return t.ptt.failures >= PTTAlertFailures
-}
-
 // Evaluate returns alert and recovery messages for state changes since last call
 func (t *Tracker) Evaluate() (msgs []string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	now := t.now()
 
-	if t.pttDown() && !t.ptt.alerted {
-		t.ptt.alerted = true
-		msgs = append(msgs, fmt.Sprintf("⚠️ PTT 無法連線（已連續 %d 分鐘）：%s", t.ptt.failures, t.ptt.lastError))
-	}
-	if t.ptt.failures == 0 && t.ptt.alerted {
-		t.ptt.alerted = false
-		msgs = append(msgs, "✅ PTT 已恢復連線")
-	}
-
-	if t.redis.failures >= PTTAlertFailures && !t.redis.alerted {
-		t.redis.alerted = true
-		msgs = append(msgs, "⚠️ Redis 無法連線："+t.redis.lastError)
-	}
-	if t.redis.failures == 0 && t.redis.alerted {
-		t.redis.alerted = false
-		msgs = append(msgs, "✅ Redis 已恢復連線")
+	for _, p := range []*probe{&t.ptt, &t.redis} {
+		if msg := p.evaluate(); msg != "" {
+			msgs = append(msgs, msg)
+		}
 	}
 
 	for _, name := range t.boardNames() {
 		b := t.boards[name]
 		failing := !b.failingSince.IsZero()
-		if failing && !b.alerted && !t.pttDown() && now.Sub(b.failingSince) >= BoardAlertAfter {
+		if failing && !b.alerted && !t.ptt.down() && now.Sub(b.failingSince) >= BoardAlertAfter {
 			b.alerted = true
 			msgs = append(msgs, fmt.Sprintf("⚠️ %s 已連續 %d 分鐘抓取失敗：%s", name, int(now.Sub(b.failingSince).Minutes()), b.lastError))
 		}
@@ -299,7 +292,7 @@ func (t *Tracker) Snapshot() Snapshot {
 	s := Snapshot{
 		Now:               now,
 		Started:           t.started,
-		PTTLastCheck:      t.ptt.lastCheck,
+		PTTLastCheck:      t.pttLastCheck,
 		PTTError:          t.ptt.lastError,
 		Bot:               t.telegram.bot,
 		TelegramLastSent:  t.telegram.lastSent,
@@ -311,11 +304,10 @@ func (t *Tracker) Snapshot() Snapshot {
 		CommentsError:     t.comments.lastError,
 	}
 
-	if t.ptt.failures > 0 {
-		s.Problems = append(s.Problems, "PTT 無法連線："+t.ptt.lastError)
-	}
-	if t.redis.failures > 0 {
-		s.Problems = append(s.Problems, "Redis 無法連線："+t.redis.lastError)
+	for _, p := range []probe{t.ptt, t.redis} {
+		if p.failures > 0 {
+			s.Problems = append(s.Problems, p.name+" 無法連線："+p.lastError)
+		}
 	}
 	if t.telegram.bot == "" {
 		s.Problems = append(s.Problems, "Telegram 尚未連線")

@@ -22,7 +22,7 @@ func TestMembership(t *testing.T) {
 	if added, _ := Request("1"); added {
 		t.Error("second request should not be added")
 	}
-	if ok, _ := IsPending("1"); !ok {
+	if pending, _ := Pending(); len(pending) != 1 {
 		t.Error("1 should be pending")
 	}
 	if err := Approve("1"); err != nil {
@@ -31,7 +31,7 @@ func TestMembership(t *testing.T) {
 	if ok, _ := IsMember("1"); !ok {
 		t.Error("1 should be member")
 	}
-	if ok, _ := IsPending("1"); ok {
+	if pending, _ := Pending(); len(pending) != 0 {
 		t.Error("1 should not be pending")
 	}
 

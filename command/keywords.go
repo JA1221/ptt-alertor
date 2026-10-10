@@ -11,7 +11,6 @@ import (
 	"github.com/Ptt-Alertor/ptt-alertor/models/article"
 	"github.com/Ptt-Alertor/ptt-alertor/models/board"
 	"github.com/Ptt-Alertor/ptt-alertor/models/keyword"
-	"github.com/Ptt-Alertor/ptt-alertor/models/subscription"
 	"github.com/Ptt-Alertor/ptt-alertor/models/user"
 	"github.com/Ptt-Alertor/ptt-alertor/notify"
 )
@@ -34,7 +33,7 @@ func (h *Handler) list(account string, edit bool) (notify.Message, error) {
 		return notify.Message{}, err
 	}
 	msg := notify.Message{Edit: edit}
-	subs := sortedSubs(u.Subscribes)
+	subs := u.Subscribes.Sorted()
 	lines := []string{"📋 <b>你的關鍵字</b>"}
 	var buttons []notify.Button
 	for _, s := range subs {
@@ -60,13 +59,6 @@ func (h *Handler) list(account string, edit bool) (notify.Message, error) {
 		msg.Buttons = append(msg.Buttons, buttons[i:min(i+2, len(buttons))])
 	}
 	return msg, nil
-}
-
-func sortedSubs(ss subscription.Subscriptions) subscription.Subscriptions {
-	sorted := make(subscription.Subscriptions, len(ss))
-	copy(sorted, ss)
-	sort.Slice(sorted, func(i, j int) bool { return strings.ToLower(sorted[i].Board) < strings.ToLower(sorted[j].Board) })
-	return sorted
 }
 
 func truncate(s string, n int) string {

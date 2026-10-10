@@ -1,8 +1,6 @@
 package web
 
-import (
-	"golang.org/x/net/html"
-)
+import "golang.org/x/net/html"
 
 type findInHTML func(node *html.Node) *html.Node
 
@@ -60,15 +58,12 @@ func getAnchorLink(anchor *html.Node) string {
 	return ""
 }
 
-func getTitle(title *html.Node) string {
-	return title.FirstChild.Data
-}
-
-func findTitle(node *html.Node) *html.Node {
-	if node.Type == html.ElementNode && node.Data == "title" {
-		return node
+// firstText is data of the first child, empty when node has no child
+func firstText(node *html.Node) string {
+	if node.FirstChild == nil {
+		return ""
 	}
-	return nil
+	return node.FirstChild.Data
 }
 
 func findMeta(node *html.Node, property string) *html.Node {

@@ -11,12 +11,6 @@ import (
 	gock "gopkg.in/h2non/gock.v1"
 )
 
-func BenchmarkCurrentPage(b *testing.B) {
-	for i := 0; i < b.N; i++ {
-		CurrentPage("lol")
-	}
-}
-
 func BenchmarkBuildArticles(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		FetchArticles("lol", 9697)
@@ -195,12 +189,11 @@ func TestBuildArticle(t *testing.T) {
 		wantErr bool
 	}{
 		{"ok", args{"TFSHS66th321", "M.1498563199.A.35C"}, article.Article{
-			ID:               1498563199,
-			Code:             "M.1498563199.A.35C",
-			Title:            "[小葉] 公告測試",
-			Link:             "https://www.ptt.cc/bbs/TFSHS66th321/M.1498563199.A.35C.html",
-			LastPushDateTime: time.Date(year, 01, 02, 13, 57, 0, 0, time.FixedZone("CST", 8*60*60)),
-			Board:            "TFSHS66th321",
+			ID:    1498563199,
+			Code:  "M.1498563199.A.35C",
+			Title: "[小葉] 公告測試",
+			Link:  "https://www.ptt.cc/bbs/TFSHS66th321/M.1498563199.A.35C.html",
+			Board: "TFSHS66th321",
 			Comments: article.Comments{
 				article.Comment{Tag: "→ ", UserID: "ChoDino", Content: ": 快點好嗎", DateTime: time.Date(year, 01, 01, 00, 55, 0, 0, time.FixedZone("CST", 8*60*60))},
 				article.Comment{Tag: "→ ", UserID: "ChoDino", Content: ": 好了~今天先做到這~預祝空軍今天賺飽飽~睡好覺@", DateTime: time.Date(year, 01, 02, 10, 22, 0, 0, time.FixedZone("CST", 8*60*60))},

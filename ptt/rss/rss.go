@@ -10,23 +10,23 @@ import (
 	"github.com/mmcdole/gofeed"
 )
 
-var ErrTooManyRequests = errors.New("Too Many Requests")
+// ErrTooManyRequests means ptt.cc limits requests, fetching should pause for a while
+var ErrTooManyRequests = errors.New("too many requests")
+
+func feedURL(board string) string {
+	return "https://www.ptt.cc/atom/" + board + ".xml"
+}
 
 // CheckBoardExist use for checking board exist or not
 func CheckBoardExist(board string) bool {
-	feed, err := parseURL("https://www.ptt.cc/atom/" + board + ".xml")
-	if err != nil {
-		return false
-	}
+	feed, err := parseURL(feedURL(board))
 	// category didn't have any items but has rss link as well
-	if len(feed.Items) == 0 {
-		return false
-	}
-	return true
+	return err == nil && len(feed.Items) > 0
 }
 
+// BuildArticles fetches latest articles of board from its atom feed
 func BuildArticles(board string) (articles article.Articles, err error) {
-	feed, err := parseURL("https://www.ptt.cc/atom/" + board + ".xml")
+	feed, err := parseURL(feedURL(board))
 	if err != nil {
 		if herr, ok := err.(gofeed.HTTPError); ok && herr.StatusCode == http.StatusTooManyRequests {
 			return nil, ErrTooManyRequests
@@ -34,14 +34,16 @@ func BuildArticles(board string) (articles article.Articles, err error) {
 		return nil, err
 	}
 	for _, item := range feed.Items {
-		article := article.Article{
-			Title:  item.Title,
-			Link:   item.GUID,
-			Date:   item.Published,
-			Author: item.Author.Name,
+		a := article.Article{
+			Title: item.Title,
+			Link:  item.GUID,
+			Date:  item.Published,
 		}
-		article.ID = article.ParseID(item.GUID)
-		articles = append(articles, article)
+		if item.Author != nil {
+			a.Author = item.Author.Name
+		}
+		a.ID = a.ParseID(item.GUID)
+		articles = append(articles, a)
 	}
 	return articles, nil
 }

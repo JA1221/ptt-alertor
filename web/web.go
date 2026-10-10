@@ -156,8 +156,6 @@ type statusPage struct {
 	Notifications []health.Notification
 }
 
-var modeNames = map[string]string{access.ModeApproval: "審核", access.ModeOpen: "開放", access.ModeClosed: "關閉"}
-
 func (s *Server) status(w http.ResponseWriter, bot string) {
 	page := statusPage{
 		Snapshot:      s.Health.Snapshot(),
@@ -168,7 +166,7 @@ func (s *Server) status(w http.ResponseWriter, bot string) {
 	pending, _ := access.Pending()
 	mode, _ := access.Registration()
 	page.Pending = len(pending)
-	page.Mode = modeNames[mode]
+	page.Mode = access.ModeNames[mode]
 	isAdmin := make(map[string]bool)
 	for _, a := range admins {
 		isAdmin[a] = true

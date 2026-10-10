@@ -115,12 +115,8 @@ func (c *CommentChecker) send(a article.Article, msg notify.Message) {
 		return
 	}
 	for _, account := range accounts {
-		u, err := user.Find(account)
-		if err != nil {
-			log.WithError(err).WithField("account", account).Error("Find User Failed")
-			continue
-		}
-		if !u.Enable {
+		u, ok := enabledUser(account)
+		if !ok {
 			continue
 		}
 		deliver(c.Notifier, u, msg, health.Notification{
