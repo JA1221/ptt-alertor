@@ -80,8 +80,8 @@
     <div class="member" id="m{{.Account}}">
       <div class="row">
         <div class="grow">
-          <b>{{.Name}}</b>{{if .Admin}} 👑{{end}}{{if not .Enabled}} <span class="bad">已封鎖 bot</span>{{end}}
-          <span class="muted">{{.Account}} · 推文追蹤 {{.Articles}} 篇</span>
+          <b>{{.Name}}</b>{{if .Admin}} 👑 管理員{{end}}{{if not .Enabled}} <span class="bad">已封鎖 bot</span>{{end}}
+          <span class="muted">{{if ne .Name .Account}}{{.Account}} · {{end}}推文追蹤 {{.Articles}} 篇</span>
         </div>
         {{if not .Admin}}
         <form method="post" action="/members/remove" onsubmit="return confirm('確定移除 {{.Name}}？對方將無法再使用 bot。')">
@@ -90,6 +90,7 @@
         {{end}}
       </div>
       {{$account := .Account}}
+      {{if .Subs}}<div class="subs-head muted"><span>看板</span><span>關鍵字（新文章標題含有就通知，按 × 刪除）</span></div>{{end}}
       {{range .Subs}}
       <div class="subs">
         <span class="board">{{.Board}}</span>

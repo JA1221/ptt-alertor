@@ -62,8 +62,10 @@
   .seg button.on { background: var(--accent); color: var(--accent-text); font-weight: 600; }
   .member { padding: 12px 0; border-top: 1px solid var(--line); }
   .member:first-of-type { border-top: 0; padding-top: 0; }
-  .subs { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 8px 0; }
-  .subs .board { font-weight: 600; margin-right: 4px; }
+  .subs-head { display: flex; gap: 6px; margin-top: 10px; font-size: 12px; }
+  .subs-head span:first-child, .subs .board { flex: 0 0 120px; overflow-wrap: anywhere; }
+  .subs { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 6px 0; padding-top: 6px; border-top: 1px dashed var(--line); }
+  .subs .board { font-weight: 600; }
   .chip { display: inline-flex; align-items: center; background: var(--code); border-radius: 999px; padding: 2px 4px 2px 10px; font-size: 14px; margin: 0; }
   .chip button { border: 0; background: none; color: var(--muted); font-size: 16px; line-height: 1; padding: 2px 6px; cursor: pointer; border-radius: 999px; }
   .chip button:hover { color: var(--bad); background: var(--bad-bg); }
