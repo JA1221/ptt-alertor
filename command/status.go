@@ -10,6 +10,7 @@ import (
 	"github.com/Ptt-Alertor/ptt-alertor/notify"
 )
 
+// status also shows the main keyboard, users of older versions get new buttons
 func (h *Handler) status(account string) (notify.Message, error) {
 	snap := h.Health.Snapshot()
 	admin, err := access.IsAdmin(account)
@@ -17,7 +18,7 @@ func (h *Handler) status(account string) (notify.Message, error) {
 		return notify.Message{}, err
 	}
 	if admin {
-		return notify.Message{Text: StatusText(snap, nil)}, nil
+		return notify.Message{Text: StatusText(snap, nil), Keyboard: true}, nil
 	}
 	u, err := user.Find(account)
 	if err != nil {
@@ -27,7 +28,7 @@ func (h *Handler) status(account string) (notify.Message, error) {
 	for _, b := range u.Subscribes.KeywordBoards() {
 		mine[strings.ToLower(b)] = true
 	}
-	return notify.Message{Text: StatusText(snap, mine)}, nil
+	return notify.Message{Text: StatusText(snap, mine), Keyboard: true}, nil
 }
 
 // StatusText describes health snapshot, boards are limited to only when it is not nil

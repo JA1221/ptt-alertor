@@ -4,6 +4,7 @@ package command
 import (
 	"regexp"
 	"strings"
+	"unicode/utf8"
 
 	log "github.com/Ptt-Alertor/logrus"
 
@@ -242,15 +243,17 @@ func (h *Handler) command(in Input) (notify.Message, error) {
 	if prompted {
 		return h.answerPrompt(in.Account, asked, text)
 	}
-	return h.guess(text), nil
+	return h.guess(in.Account, text)
 }
 
+const unknownText = "看不懂這個指令 🤔\n新增關鍵字：按下方「➕ 新增」\n輸入「指令」查看全部用法。"
+
 // guess suggests command for text which is not a command
-func (h *Handler) guess(text string) notify.Message {
+func (h *Handler) guess(account, text string) (notify.Message, error) {
 	if args := articleURLRe.FindStringSubmatch(text); args != nil {
 		msg := notify.Text("要追蹤這篇文章的推文嗎？")
 		msg.Buttons = buttonRow(button("💬 追蹤推文", cbTrackArticle+args[1]+"|"+args[2]))
-		return msg
+		return msg, nil
 	}
 	if args := guessKeywordRe.FindStringSubmatch(text); args != nil {
 		cmd := "新增 " + args[1] + " " + args[2]
@@ -258,9 +261,19 @@ func (h *Handler) guess(text string) notify.Message {
 		if data := cbAddKeyword + args[1] + "|" + args[2]; len(data) <= callbackLimit {
 			msg.Buttons = buttonRow(button("➕ 新增", data), button("取消", cbCancel))
 		}
-		return msg
+		return msg, nil
 	}
-	msg := notify.Text("看不懂這個指令 🤔\n新增關鍵字範例：新增 stock 台積電\n輸入「指令」查看全部用法。")
+	if !strings.ContainsAny(text, " \t\n") && utf8.RuneCountInString(text) <= maxWordLength {
+		return h.wordMenu(account, text)
+	}
+	return unknown(), nil
+}
+
+// maxWordLength limits a single word offered as keyword
+const maxWordLength = 30
+
+func unknown() notify.Message {
+	msg := notify.Text(unknownText)
 	msg.Keyboard = true
 	return msg
 }

@@ -40,8 +40,12 @@ var funcs = template.FuncMap{
 
 var pages = template.Must(template.New("").Funcs(funcs).ParseFS(templates, "templates/*.html"))
 
-// maxRestoreSize limits uploaded backup
-const maxRestoreSize = 10 << 20
+const (
+	// maxRestoreSize limits uploaded backup
+	maxRestoreSize = 10 << 20
+	// shownNotifications are shown, older ones are folded
+	shownNotifications = 5
+)
 
 // Actions change members and keywords, telling users on telegram
 type Actions interface {
@@ -312,6 +316,8 @@ type statusPage struct {
 	ModeNames     map[string]string
 	BoardOptions  []string
 	Notifications []health.Notification
+	// Shown is count of notifications shown, older ones are folded
+	Shown int
 }
 
 func (s *Server) status(w http.ResponseWriter, r *http.Request) {
@@ -323,6 +329,7 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 		Modes:         []string{access.ModeApproval, access.ModeOpen, access.ModeClosed},
 		ModeNames:     access.ModeNames,
 		Notifications: health.Recent(),
+		Shown:         shownNotifications,
 	}
 	accounts, _ := access.Members()
 	admins, _ := access.Admins()

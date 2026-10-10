@@ -35,7 +35,7 @@ func Help() notify.Message {
 	return notify.Message{
 		Text: strings.Join([]string{
 			"<b>🔔 關鍵字</b>",
-			"按「➕ 新增」用選單新增，或輸入：",
+			"按「➕ 新增」用選單新增、直接傳一個詞選看板，或輸入：",
 			"<code>新增 看板 關鍵字</code>",
 			"<code>刪除 看板 關鍵字</code>（關鍵字為 * 全部刪除）",
 			"多個看板、關鍵字用逗號分隔：",
@@ -51,7 +51,7 @@ func Help() notify.Message {
 			"<b>📋 其他</b>",
 			"<code>清單</code>：你的關鍵字，點看板可刪除",
 			"<code>狀態</code>：運作狀態",
-			"<code>測試 看板</code>：立即抓取最新文章並比對你的關鍵字",
+			"<code>測試 看板</code>：立即抓取最新文章並比對你的關鍵字（清單的看板頁也有按鈕）",
 			"",
 			"<b>👑 管理員</b>",
 			"<code>使用者</code>：成員與待審核清單",

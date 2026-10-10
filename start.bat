@@ -4,12 +4,26 @@ cd /d "%~dp0"
 title Ptt Alertor
 
 where docker >nul 2>nul
-if errorlevel 1 (
-  echo 找不到 Docker，請先安裝 Docker Desktop，裝好後再執行一次這個檔案。
-  start "" "https://www.docker.com/products/docker-desktop/"
-  pause
-  exit /b 1
-)
+if not errorlevel 1 goto docker_installed
+echo 這台電腦還沒有安裝 Docker Desktop。
+where winget >nul 2>nul
+if errorlevel 1 goto install_manually
+choice /c YN /m "要自動下載安裝嗎（約 600MB，安裝時會跳出系統權限確認）"
+if errorlevel 2 goto install_manually
+winget install -e --id Docker.DockerDesktop --accept-package-agreements --accept-source-agreements
+if errorlevel 1 goto install_manually
+echo.
+echo 安裝完成！請重新開機，開機後打開 Docker Desktop 按同意，再執行一次 start.bat。
+pause
+exit /b 0
+
+:install_manually
+echo 請到開啟的網頁下載安裝 Docker Desktop，裝好後再執行一次 start.bat。
+start "" "https://www.docker.com/products/docker-desktop/"
+pause
+exit /b 1
+
+:docker_installed
 
 docker info >nul 2>nul
 if not errorlevel 1 goto docker_ready

@@ -75,6 +75,10 @@
   form.add input[type=text] { flex: 1; min-width: 140px; width: auto; margin: 0; padding: 6px 10px; }
   input[type=file] { font: inherit; font-size: 14px; max-width: 100%; }
   button:disabled { opacity: .6; cursor: progress; }
+  tr.older, main.show-older .when-folded, .when-shown { display: none; }
+  main.show-older tr.older { display: table-row; }
+  main.show-older .when-shown { display: inline; }
+  button.more { border: 0; background: none; color: var(--accent); font: inherit; font-size: 14px; padding: 8px 0 0; cursor: pointer; }
   .toast { position: fixed; left: 50%; bottom: 24px; transform: translate(-50%, 16px); max-width: calc(100% - 32px);
     padding: 10px 18px; border-radius: 10px; font-weight: 500; box-shadow: 0 6px 24px rgba(0,0,0,.18);
     opacity: 0; pointer-events: none; transition: opacity .2s, transform .2s; }

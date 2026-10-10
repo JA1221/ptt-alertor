@@ -15,18 +15,21 @@ var PopularBoards = []string{
 	"C_Chat", "Baseball", "NBA", "movie", "Tech_Job", "home-sale",
 }
 
-const maxMenuBoards = 12
+const (
+	maxMenuBoards = 12
+	maxWordBoards = 6
+)
 
-// addMenu asks which board to add keywords to
-func (h *Handler) addMenu(account string) (notify.Message, error) {
+// menuBoards lists boards of the user then popular boards, at most n
+func menuBoards(account string, n int) ([]string, error) {
 	u, err := user.Find(account)
 	if err != nil {
-		return notify.Message{}, err
+		return nil, err
 	}
 	var names []string
 	seen := make(map[string]bool)
 	add := func(name string) {
-		if !seen[strings.ToLower(name)] && len(names) < maxMenuBoards {
+		if !seen[strings.ToLower(name)] && len(names) < n {
 			seen[strings.ToLower(name)] = true
 			names = append(names, name)
 		}
@@ -39,7 +42,15 @@ func (h *Handler) addMenu(account string) (notify.Message, error) {
 	for _, name := range PopularBoards {
 		add(name)
 	}
+	return names, nil
+}
 
+// addMenu asks which board to add keywords to
+func (h *Handler) addMenu(account string) (notify.Message, error) {
+	names, err := menuBoards(account, maxMenuBoards)
+	if err != nil {
+		return notify.Message{}, err
+	}
 	var buttons []notify.Button
 	for _, name := range names {
 		buttons = append(buttons, button(name, cbPickBoard+name))
@@ -47,6 +58,30 @@ func (h *Handler) addMenu(account string) (notify.Message, error) {
 	msg := notify.Message{Text: "➕ <b>新增關鍵字</b>\n選擇看板，或直接輸入「看板 關鍵字」，例如 <code>stock 台積電</code>"}
 	msg.Buttons = rows(buttons, 3)
 	msg.Buttons = append(msg.Buttons, []notify.Button{button("✏️ 其他看板", cbOtherBoard), button("取消", cbCancel)})
+	return msg, nil
+}
+
+// wordMenu offers adding a single word as keyword of a board, ascii words may be board names too
+func (h *Handler) wordMenu(account, word string) (notify.Message, error) {
+	names, err := menuBoards(account, maxWordBoards)
+	if err != nil {
+		return notify.Message{}, err
+	}
+	var buttons []notify.Button
+	for _, name := range names {
+		if data := cbAddKeyword + name + "|" + word; len(data) <= callbackLimit {
+			buttons = append(buttons, button(name, data))
+		}
+	}
+	if len(buttons) == 0 {
+		return unknown(), nil
+	}
+	msg := notify.Message{Text: "要把「" + notify.E(word) + "」加為哪個看板的關鍵字？"}
+	msg.Buttons = rows(buttons, 3)
+	if boardNameRe.MatchString(word) {
+		msg.Buttons = append(msg.Buttons, buttonRow(button("📋 "+word+" 是看板，要在這個看板新增", cbPickBoard+word))...)
+	}
+	msg.Buttons = append(msg.Buttons, buttonRow(button("取消", cbCancel))...)
 	return msg, nil
 }
 

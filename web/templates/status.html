@@ -139,8 +139,8 @@
     {{if .Notifications}}
     <div class="table-wrap"><table>
       <tr><th>時間</th><th>類型</th><th>看板</th><th>內容</th></tr>
-      {{range .Notifications}}
-      <tr>
+      {{range $i, $n := .Notifications}}
+      <tr{{if ge $i $.Shown}} class="older"{{end}}>
         <td class="nowrap">{{clock .Time}}</td>
         <td class="nowrap">{{if eq .Kind "keyword"}}關鍵字{{else if eq .Kind "comment"}}推文{{else}}警示{{end}}</td>
         <td class="nowrap">{{.Board}}</td>
@@ -148,6 +148,11 @@
       </tr>
       {{end}}
     </table></div>
+    {{if gt (len .Notifications) .Shown}}
+    <button type="button" class="more" onclick="document.querySelector('main').classList.toggle('show-older')">
+      <span class="when-folded">顯示更早的通知</span><span class="when-shown">收起</span>
+    </button>
+    {{end}}
     {{else}}<div class="muted">尚未送出通知。</div>{{end}}
   </div>
 

@@ -83,7 +83,7 @@ func (h *Handler) boardView(account, boardName string, edit bool) (notify.Messag
 	}
 	msg.Buttons = append(rows(buttons, 2),
 		[]notify.Button{button("➕ 新增", cbPickBoard+sub.Board), button("🗑 全部刪除", cbDeleteBoard+sub.Board)},
-		[]notify.Button{button("⬅️ 返回清單", "清單")},
+		[]notify.Button{button("🧪 測試抓取", "測試 "+sub.Board), button("⬅️ 返回清單", "清單")},
 	)
 	return msg, nil
 }
@@ -245,9 +245,12 @@ func (h *Handler) checkBoards(boards []string, keywordStr string) (notify.Messag
 // saved articles are untouched so checking is not affected
 func (h *Handler) test(account, boardName string) (notify.Message, error) {
 	boardName = strings.ToLower(boardName)
+	back := buttonRow(button("⬅️ 返回 "+boardName, cbBoardView+boardName))
 	articles, err := h.FetchBoard(boardName)
 	if err != nil {
-		return notify.Text(fmt.Sprintf("❌ %s 抓取失敗：%s", boardName, err)), nil
+		msg := notify.Text(fmt.Sprintf("❌ %s 抓取失敗：%s", boardName, err))
+		msg.Buttons = back
+		return msg, nil
 	}
 	latest := make(article.Articles, len(articles))
 	copy(latest, articles)
@@ -265,7 +268,7 @@ func (h *Handler) test(account, boardName string) (notify.Message, error) {
 	sub, _ := u.Subscribes.Find(boardName)
 	if len(sub.Keywords) == 0 {
 		lines = append(lines, "", "你在 "+notify.E(boardName)+" 沒有設定關鍵字。")
-		return notify.Message{Text: strings.Join(lines, "\n")}, nil
+		return notify.Message{Text: strings.Join(lines, "\n"), Buttons: back}, nil
 	}
 	for _, kw := range sub.Keywords {
 		matched := latest.Match(kw)
@@ -277,5 +280,5 @@ func (h *Handler) test(account, boardName string) (notify.Message, error) {
 			lines = append(lines, notify.Link(a.Title, a.Link))
 		}
 	}
-	return notify.Message{Text: strings.Join(lines, "\n")}, nil
+	return notify.Message{Text: strings.Join(lines, "\n"), Buttons: back}, nil
 }

@@ -121,7 +121,7 @@ func TestHelp(t *testing.T) {
 	if got := say(h, "1", "/start"); !strings.Contains(got.Text, "歡迎") {
 		t.Errorf("/start = %q", got.Text)
 	}
-	if got := say(h, "1", "hello"); !strings.Contains(got.Text, "看不懂") {
+	if got := say(h, "1", "你好 嗎"); !strings.Contains(got.Text, "看不懂") {
 		t.Errorf("unknown command reply = %q", got.Text)
 	}
 	if u, err := user.Find("1"); err != nil || u.ChatID() != 1 || u.DisplayName() != "name1" {
@@ -519,7 +519,7 @@ func TestAddMenu(t *testing.T) {
 	if kws := keywordsOf(t, "1", "stock"); !reflect.DeepEqual(kws, []string{"台積電", "聯發科"}) {
 		t.Errorf("keywords = %v", kws)
 	}
-	if got := say(h, "1", "鴻海"); !strings.Contains(got.Text, "看不懂") {
+	if got := say(h, "1", "鴻海"); !strings.Contains(got.Text, "加為哪個看板") {
 		t.Errorf("prompt is answered once: %q", got.Text)
 	}
 }
@@ -533,7 +533,7 @@ func TestAddMenuOtherBoard(t *testing.T) {
 	if !strings.Contains(got.Text, "是不是 stock") || !hasButton(got, "pb|stock") {
 		t.Fatalf("wrong board = %+v", got)
 	}
-	if got := say(h, "1", "台積電"); !strings.Contains(got.Text, "看不懂") {
+	if got := say(h, "1", "台積電"); !strings.Contains(got.Text, "加為哪個看板") {
 		t.Errorf("wrong board ends prompt: %q", got.Text)
 	}
 
@@ -633,5 +633,42 @@ func TestPttwebLink(t *testing.T) {
 	got := say(h, "1", "https://www.pttweb.cc/bbs/Stock/M.1497363598.A.74E")
 	if !hasButton(got, "ta|Stock|M.1497363598.A.74E") {
 		t.Errorf("pttweb link = %+v", got)
+	}
+}
+
+func TestWordMenu(t *testing.T) {
+	h, _ := setup(t)
+	say(h, "1", "新增 movie a")
+
+	got := say(h, "1", "台積電")
+	if !hasButton(got, "ak|movie|台積電") || !hasButton(got, "ak|Gossiping|台積電") || hasButton(got, "pb|台積電") {
+		t.Fatalf("word menu = %+v", got)
+	}
+	if got := press(h, "1", "ak|Stock|台積電"); !got.Edit || !strings.Contains(got.Text, "新增成功") {
+		t.Errorf("pick board = %+v", got)
+	}
+	if kws := keywordsOf(t, "1", "stock"); !reflect.DeepEqual(kws, []string{"台積電"}) {
+		t.Errorf("keywords = %v", kws)
+	}
+
+	// ascii word may be a board
+	if got := say(h, "1", "iPhone"); !hasButton(got, "ak|movie|iPhone") || !hasButton(got, "pb|iPhone") {
+		t.Errorf("ascii word menu = %+v", got)
+	}
+}
+
+func TestBoardViewTest(t *testing.T) {
+	h, _ := setup(t)
+	say(h, "1", "新增 stock 台積電")
+	got := press(h, "1", "bv|stock")
+	if !hasButton(got, "測試 stock") {
+		t.Fatalf("board view = %+v", got)
+	}
+	got = press(h, "1", "測試 stock")
+	if !got.Edit || !strings.Contains(got.Text, "「台積電」命中 2 篇") || !hasButton(got, "bv|stock") {
+		t.Errorf("test from board view = %+v", got)
+	}
+	if got := say(h, "1", "狀態"); !got.Keyboard {
+		t.Error("status should refresh keyboard")
 	}
 }
