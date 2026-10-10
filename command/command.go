@@ -42,7 +42,11 @@ const (
 	cbOtherBoard    = "ob"
 	cbBoardView     = "bv|"
 	cbDeleteBoard   = "db|"
-	cbCancel        = "cancel"
+	// buttons of notifications, they must not replace the notification
+	cbTrackToast   = "tt|"
+	cbUntrackToast = "ut|"
+	cbBoardMessage = "bm|"
+	cbCancel       = "cancel"
 )
 
 // Input is a message or a button press from user
@@ -100,9 +104,10 @@ var slashAlias = map[string]string{
 }
 
 var (
-	keywordRe      = regexp.MustCompile(`^(新增|刪除)\s+(\S+?):?\s+(\S.*)$`)
-	boardNameRe    = regexp.MustCompile(`^[\w.-]+$`)
-	articleURLRe   = regexp.MustCompile(`https?://www\.ptt\.cc/bbs/([\w.-]+)/([MG]\.\d+\.A\.[0-9A-Za-z]+)\.html`)
+	keywordRe   = regexp.MustCompile(`^(新增|刪除)\s+(\S+?):?\s+(\S.*)$`)
+	boardNameRe = regexp.MustCompile(`^[\w.-]+$`)
+	// links of ptt.cc and pttweb.cc
+	articleURLRe   = regexp.MustCompile(`https?://(?:www\.)?ptt(?:web)?\.cc/bbs/([\w.-]+)/([MG]\.\d+\.A\.[0-9A-Za-z]+)(?:\.html)?`)
 	articleCmdRe   = regexp.MustCompile(`^(新增推文|刪除推文)\s+` + articleURLRe.String() + `\s*$`)
 	testRe         = regexp.MustCompile(`^測試\s+([\w.-]+)$`)
 	registrationRe = regexp.MustCompile(`^註冊\s+(審核|開放|關閉)$`)
@@ -285,6 +290,16 @@ func (h *Handler) callback(in Input) (notify.Message, error) {
 		msg := confirm("確定刪除 "+name+" 的全部關鍵字？", "刪除 "+name+" *", cbBoardView+name)
 		msg.Edit = true
 		return msg, nil
+	case strings.HasPrefix(data, cbTrackToast):
+		args := split(cbTrackToast)
+		if len(args) != 2 {
+			return notify.Message{Toast: "按鈕已失效。"}, nil
+		}
+		return toast(h.addArticle(in.Account, args[0], args[1]))
+	case strings.HasPrefix(data, cbUntrackToast):
+		return toast(h.removeArticle(in.Account, strings.TrimPrefix(data, cbUntrackToast)))
+	case strings.HasPrefix(data, cbBoardMessage):
+		return h.boardView(in.Account, strings.TrimPrefix(data, cbBoardMessage), false)
 	case strings.HasPrefix(data, cbPickBoard):
 		return h.askKeywords(in.Account, strings.TrimPrefix(data, cbPickBoard)), nil
 	case data == cbOtherBoard:

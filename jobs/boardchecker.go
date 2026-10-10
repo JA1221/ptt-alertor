@@ -8,6 +8,7 @@ import (
 
 	log "github.com/Ptt-Alertor/logrus"
 
+	"github.com/Ptt-Alertor/ptt-alertor/command"
 	"github.com/Ptt-Alertor/ptt-alertor/health"
 	"github.com/Ptt-Alertor/ptt-alertor/models/article"
 	"github.com/Ptt-Alertor/ptt-alertor/models/board"
@@ -105,6 +106,7 @@ func (c *BoardChecker) notify(name string, news article.Articles) {
 			Kind:    health.KindKeyword,
 			Board:   name,
 			Summary: strings.Join(keywords, "、") + "：" + matched[0].Title,
+			Link:    matched[0].Link,
 		})
 	}
 }
@@ -138,5 +140,5 @@ func ArticlesMessage(boardName string, keywords []string, articles article.Artic
 	for _, a := range articles {
 		lines = append(lines, notify.Link(a.Title, a.Link))
 	}
-	return notify.Message{Text: strings.Join(lines, "\n")}
+	return notify.Message{Text: strings.Join(lines, "\n"), Buttons: command.ArticlesButtons(boardName, articles)}
 }

@@ -8,10 +8,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"html"
 	"net/http"
 	"net/url"
-	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -101,12 +99,39 @@ func (b *Bot) setMenu() {
 	}
 }
 
+// descriptions are shown to people opening the bot before they start a chat
+var descriptions = []struct{ get, set, field, value string }{
+	{"getMyDescription", "setMyDescription", "description",
+		"PTT 關鍵字通知：看板有新文章的標題符合你的關鍵字就通知你，也能追蹤文章推文。\n\n按「開始」後照著指示使用，不用記指令。"},
+	{"getMyShortDescription", "setMyShortDescription", "short_description",
+		"PTT 新文章關鍵字通知、推文追蹤"},
+}
+
+// setDescriptions fills empty descriptions, ones set by BotFather are kept
+func (b *Bot) setDescriptions() {
+	for _, d := range descriptions {
+		resp, err := b.api.MakeRequest(d.get, url.Values{})
+		if err != nil {
+			log.WithError(b.sanitize(err)).Warn("Telegram Get Description Failed")
+			continue
+		}
+		var current map[string]string
+		if json.Unmarshal(resp.Result, &current) != nil || current[d.field] != "" {
+			continue
+		}
+		if _, err := b.api.MakeRequest(d.set, url.Values{d.field: {d.value}}); err != nil {
+			log.WithError(b.sanitize(err)).Warn("Telegram Set Description Failed")
+		}
+	}
+}
+
 // Run receives updates until ctx is done
 func (b *Bot) Run(ctx context.Context) {
 	if _, err := b.api.RemoveWebhook(); err != nil {
 		log.WithError(b.sanitize(err)).Warn("Telegram Remove Webhook Failed")
 	}
 	b.setMenu()
+	b.setDescriptions()
 
 	// updates of a user always go to the same worker, so they are handled in order
 	queues := make([]chan tgbotapi.Update, workers)
@@ -205,11 +230,12 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) {
 	b.reply(msg.Chat.ID, reply)
 }
 
+// maxToast is max characters of a callback answer
+const maxToast = 200
+
 func (b *Bot) handleCallback(q *tgbotapi.CallbackQuery) {
-	if _, err := b.api.AnswerCallbackQuery(tgbotapi.NewCallback(q.ID, "")); err != nil {
-		log.WithError(b.sanitize(err)).Warn("Telegram Answer Callback Failed")
-	}
 	if q.Message == nil || q.From == nil {
+		b.answer(q.ID, "")
 		return
 	}
 	chatID := q.Message.Chat.ID
@@ -220,10 +246,24 @@ func (b *Bot) handleCallback(q *tgbotapi.CallbackQuery) {
 		Text:     q.Data,
 		Callback: true,
 	})
+	// the button keeps loading until answered
+	b.answer(q.ID, reply.Toast)
+	if reply.Text == "" {
+		return
+	}
 	if reply.Edit && b.edit(chatID, q.Message.MessageID, reply) == nil {
 		return
 	}
 	b.reply(chatID, reply)
+}
+
+func (b *Bot) answer(id, toast string) {
+	if r := []rune(toast); len(r) > maxToast {
+		toast = string(r[:maxToast-1]) + "…"
+	}
+	if _, err := b.api.AnswerCallbackQuery(tgbotapi.NewCallback(id, toast)); err != nil {
+		log.WithError(b.sanitize(err)).Warn("Telegram Answer Callback Failed")
+	}
 }
 
 func (b *Bot) reply(chatID int64, msg notify.Message) {
@@ -301,8 +341,6 @@ func (b *Bot) Send(chatID int64, msg notify.Message) error {
 	return nil
 }
 
-var tagRe = regexp.MustCompile(`<[^>]*>`)
-
 // send retries on network errors and rate limits (waits retry_after),
 // unreachable chats (e.g. bot blocked) return notify.ErrUnreachable,
 // broken HTML falls back to plain text
@@ -321,7 +359,7 @@ func (b *Bot) send(m tgbotapi.MessageConfig) error {
 			case strings.Contains(apiErr.Message, "can't parse entities") && m.ParseMode != "":
 				log.WithField("error", apiErr.Message).Warn("Telegram HTML Invalid, Send Plain Text")
 				m.ParseMode = ""
-				m.Text = html.UnescapeString(tagRe.ReplaceAllString(m.Text, ""))
+				m.Text = notify.Plain(m.Text)
 				attempt--
 				continue
 			case apiErr.RetryAfter <= 0:

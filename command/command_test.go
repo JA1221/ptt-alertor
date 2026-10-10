@@ -600,3 +600,46 @@ func TestKeyboardButtonsAreCommands(t *testing.T) {
 		}
 	}
 }
+
+func TestNotificationButtons(t *testing.T) {
+	h, _ := setup(t)
+	say(h, "1", "新增 stock a")
+	articles := article.Articles{
+		{Title: "a1", Link: "https://www.ptt.cc/bbs/Stock/M.1.A.1.html"},
+		{Title: "deleted"},
+		{Title: "a2", Link: "https://www.ptt.cc/bbs/Stock/M.2.A.2.html"},
+		{Title: "a3", Link: "https://www.ptt.cc/bbs/Stock/M.3.A.3.html"},
+		{Title: "a4", Link: "https://www.ptt.cc/bbs/Stock/M.4.A.4.html"},
+	}
+	buttons := ArticlesButtons("stock", articles)
+	msg := notify.Message{Buttons: buttons}
+	if len(buttons) != 4 || !hasButton(msg, "tt|Stock|M.1.A.1") || hasButton(msg, "tt|Stock|M.4.A.4") || !hasButton(msg, "bm|stock") {
+		t.Fatalf("buttons = %+v", buttons)
+	}
+
+	// notification buttons pop up results and keep the notification
+	got := press(h, "1", "tt|Stock|M.1.A.1")
+	if got.Text != "" || !strings.HasPrefix(got.Toast, "✅ 開始追蹤推文") || !strings.Contains(got.Toast, "標題<b>") {
+		t.Errorf("track = %+v", got)
+	}
+	if got := press(h, "1", "tt|Stock|M.1.A.1"); got.Toast != "已在追蹤這篇文章。" {
+		t.Errorf("track again = %+v", got)
+	}
+	if !hasButton(notify.Message{Buttons: CommentsButtons("M.1.A.1")}, "ut|M.1.A.1") {
+		t.Error("comment notification should offer stopping")
+	}
+	if got := press(h, "1", "ut|M.1.A.1"); got.Text != "" || got.Toast != "✅ 已停止追蹤推文。" {
+		t.Errorf("untrack = %+v", got)
+	}
+	if got := press(h, "1", "bm|stock"); got.Edit || !strings.Contains(got.Text, "<b>stock</b> 的關鍵字") {
+		t.Errorf("manage board = %+v", got)
+	}
+}
+
+func TestPttwebLink(t *testing.T) {
+	h, _ := setup(t)
+	got := say(h, "1", "https://www.pttweb.cc/bbs/Stock/M.1497363598.A.74E")
+	if !hasButton(got, "ta|Stock|M.1497363598.A.74E") {
+		t.Errorf("pttweb link = %+v", got)
+	}
+}

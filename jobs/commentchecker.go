@@ -7,6 +7,7 @@ import (
 
 	log "github.com/Ptt-Alertor/logrus"
 
+	"github.com/Ptt-Alertor/ptt-alertor/command"
 	"github.com/Ptt-Alertor/ptt-alertor/health"
 	"github.com/Ptt-Alertor/ptt-alertor/models/article"
 	"github.com/Ptt-Alertor/ptt-alertor/models/user"
@@ -105,7 +106,7 @@ func CommentsMessage(a article.Article, comments article.Comments) notify.Messag
 	for _, c := range comments {
 		lines = append(lines, notify.E(c.String()))
 	}
-	return notify.Message{Text: strings.Join(lines, "\n")}
+	return notify.Message{Text: strings.Join(lines, "\n"), Buttons: command.CommentsButtons(a.Code)}
 }
 
 func (c *CommentChecker) send(a article.Article, msg notify.Message) {
@@ -124,6 +125,7 @@ func (c *CommentChecker) send(a article.Article, msg notify.Message) {
 			Kind:    health.KindComment,
 			Board:   a.Board,
 			Summary: a.Title,
+			Link:    a.Link,
 		})
 	}
 }

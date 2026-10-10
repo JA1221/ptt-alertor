@@ -15,3 +15,6 @@ coverage.txt
 
 # backups contain bot token
 backups/
+
+# start.bat asks about autostart once
+.no-autostart

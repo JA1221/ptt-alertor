@@ -4,6 +4,7 @@ package notify
 import (
 	"errors"
 	"html"
+	"regexp"
 	"sync"
 	"time"
 
@@ -30,6 +31,8 @@ type Message struct {
 	Keyboard bool
 	// Edit replaces the message whose button was pressed
 	Edit bool
+	// Toast pops up for the user who pressed a button, nothing else is sent when Text is empty
+	Toast string
 }
 
 // Text makes plain text message
@@ -40,6 +43,13 @@ func Text(s string) Message {
 // E escapes text for HTML messages
 func E(s string) string {
 	return html.EscapeString(s)
+}
+
+var tagRe = regexp.MustCompile(`<[^>]*>`)
+
+// Plain converts HTML message text to plain text
+func Plain(s string) string {
+	return html.UnescapeString(tagRe.ReplaceAllString(s, ""))
 }
 
 // Link makes HTML link

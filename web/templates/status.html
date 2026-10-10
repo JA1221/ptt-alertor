@@ -144,7 +144,7 @@
         <td class="nowrap">{{clock .Time}}</td>
         <td class="nowrap">{{if eq .Kind "keyword"}}關鍵字{{else if eq .Kind "comment"}}推文{{else}}警示{{end}}</td>
         <td class="nowrap">{{.Board}}</td>
-        <td>{{.Summary}}</td>
+        <td>{{if .Link}}<a href="{{.Link}}" target="_blank" rel="noopener">{{.Summary}}</a>{{else}}{{.Summary}}{{end}}</td>
       </tr>
       {{end}}
     </table></div>

@@ -32,7 +32,7 @@ PTT 關鍵字通知 Telegram bot。自己架、分享給朋友用，不用寫程
 
 完成！在 Telegram 按下方「➕ 新增」，選看板、輸入關鍵字試試看。
 
-> 想讓電腦開機後自動執行：Docker Desktop → Settings → General → 勾選「Start Docker Desktop when you sign in」。
+> 第一次執行 `start.bat` 時會問要不要開機自動執行，選 Y 就好。之後想取消：工作管理員 → 啟動應用程式 → 停用「Ptt Alertor」。macOS：Docker Desktop → Settings → General → 勾選「Start Docker Desktop when you sign in」。
 
 ## 分享給朋友
 
@@ -58,7 +58,8 @@ Telegram 裡也可以用指令：
 - **➕ 新增**：選看板（自己的看板和熱門看板）→ 輸入關鍵字，完成
 - **📋 清單**：點看板 → 點關鍵字刪除，或在該看板再新增
 - **💬 推文清單**：追蹤中的文章，點按鈕停止追蹤
-- 直接貼上 PTT 文章網址 → 一鍵追蹤推文；輸入 `stock 台積電` → 一鍵新增
+- 通知下方的按鈕：「💬 追蹤推文」一鍵追蹤、「⚙️ 管理關鍵字」調整太吵的關鍵字、推文通知的「🛑 停止追蹤」
+- 直接貼上 PTT 或 pttweb 文章網址 → 一鍵追蹤推文；輸入 `stock 台積電` → 一鍵新增
 
 習慣打字也可以用指令：
 

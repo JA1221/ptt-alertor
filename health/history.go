@@ -29,6 +29,7 @@ type Notification struct {
 	Kind    string    `json:"kind"`
 	Board   string    `json:"board"`
 	Summary string    `json:"summary"`
+	Link    string    `json:"link,omitempty"`
 }
 
 // Record saves a sent notification, keeps latest ones only
