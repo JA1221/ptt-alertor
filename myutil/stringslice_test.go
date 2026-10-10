@@ -26,26 +26,6 @@ func TestStringSlice_Clean(t *testing.T) {
 	}
 }
 
-func TestStringSlice_RemoveStringsSpace(t *testing.T) {
-	tests := []struct {
-		name   string
-		ss     *StringSlice
-		result *StringSlice
-	}{
-		{"empty", &StringSlice{""}, &StringSlice{""}},
-		{"single", &StringSlice{"a b"}, &StringSlice{"ab"}},
-		{"multiple", &StringSlice{"a b", "c d"}, &StringSlice{"ab", "cd"}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			tt.ss.RemoveStringsSpace()
-			if !reflect.DeepEqual(tt.ss, tt.result) {
-				t.Errorf("StringSlice.RemoveStringsSpace() want %+v, got %+v", tt.result, tt.ss)
-			}
-		})
-	}
-}
-
 func TestStringSlice_AppendNonRepeatElement(t *testing.T) {
 	type args struct {
 		str           string

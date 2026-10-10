@@ -17,12 +17,6 @@ func (ss *StringSlice) Clean() {
 	}
 }
 
-func (ss *StringSlice) RemoveStringsSpace() {
-	if *ss != nil {
-		*ss = strings.Split(strings.Replace(strings.Join(*ss, ","), " ", "", -1), ",")
-	}
-}
-
 func (ss *StringSlice) AppendNonRepeatElement(str string, caseSensitive bool) {
 	if ss.Index(str, caseSensitive) == -1 {
 		*ss = append(*ss, str)

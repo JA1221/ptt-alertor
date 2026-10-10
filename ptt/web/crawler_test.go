@@ -148,13 +148,12 @@ func TestBuildArticles(t *testing.T) {
 	}{
 		{"ok", args{"lol", -1}, []article.Article{
 			{
-				ID:      1516285019,
-				Code:    "",
-				Title:   "[外絮] JTeam FB",
-				Link:    "https://www.ptt.cc/bbs/LoL/M.1516285019.A.BCE.html",
-				Date:    "1/18",
-				Author:  "Andy7577272",
-				PushSum: 2,
+				ID:     1516285019,
+				Code:   "",
+				Title:  "[外絮] JTeam FB",
+				Link:   "https://www.ptt.cc/bbs/LoL/M.1516285019.A.BCE.html",
+				Date:   "1/18",
+				Author: "Andy7577272",
 			},
 		}, false},
 	}
@@ -199,7 +198,6 @@ func TestBuildArticle(t *testing.T) {
 			Link:             "https://www.ptt.cc/bbs/TFSHS66th321/M.1498563199.A.35C.html",
 			LastPushDateTime: time.Date(year, 01, 02, 13, 57, 0, 0, time.FixedZone("CST", 8*60*60)),
 			Board:            "TFSHS66th321",
-			PushSum:          0,
 			Comments: article.Comments{
 				article.Comment{Tag: "→ ", UserID: "ChoDino", Content: ": 快點好嗎", DateTime: time.Date(year, 01, 01, 00, 55, 0, 0, time.FixedZone("CST", 8*60*60))},
 				article.Comment{Tag: "→ ", UserID: "ChoDino", Content: ": 好了~今天先做到這~預祝空軍今天賺飽飽~睡好覺@", DateTime: time.Date(year, 01, 02, 10, 22, 0, 0, time.FixedZone("CST", 8*60*60))},

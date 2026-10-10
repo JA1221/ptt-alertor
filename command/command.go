@@ -1,602 +1,379 @@
+// Package command parses and handles text commands from users
 package command
 
 import (
-	"bytes"
 	"errors"
-	"flag"
+	"fmt"
 	"regexp"
-	"strconv"
+	"sort"
 	"strings"
 
-	"github.com/Ptt-Alertor/ptt-alertor/models"
-	"github.com/Ptt-Alertor/ptt-alertor/myutil"
-	"github.com/Ptt-Alertor/ptt-alertor/ptt/web"
-
-	"fmt"
-
 	log "github.com/Ptt-Alertor/logrus"
+
+	"github.com/Ptt-Alertor/ptt-alertor/health"
 	"github.com/Ptt-Alertor/ptt-alertor/models/article"
 	"github.com/Ptt-Alertor/ptt-alertor/models/board"
-	"github.com/Ptt-Alertor/ptt-alertor/models/subscription"
-	"github.com/Ptt-Alertor/ptt-alertor/models/top"
+	"github.com/Ptt-Alertor/ptt-alertor/models/keyword"
 	"github.com/Ptt-Alertor/ptt-alertor/models/user"
+	"github.com/Ptt-Alertor/ptt-alertor/ptt/web"
 )
 
-const subArticlesLimit int = 50
-const updateFailedMsg string = "失敗，請嘗試封鎖再解封鎖，並重新執行註冊步驟。\n若問題未解決，請至粉絲團或 LINE 首頁留言。"
+const (
+	articlesLimit = 50
+	// testShowLimit limits articles shown per keyword by 測試
+	testShowLimit = 5
+	failedMsg     = "失敗，請稍後再試。"
+)
 
-var inputErrorTips = []string{
-	"指令格式錯誤。",
-	"1. 需以空白分隔動作、板名、參數",
-	"2. 板名欄位開頭與結尾不可有逗號",
-	"3. 板名欄位間不允許空白字元。",
+// Help lists commands in fixed order
+var Help = strings.Join([]string{
+	"[一般]",
+	"指令：可使用的指令清單",
+	"清單：設定的看板與關鍵字",
+	"狀態：各元件運作狀態",
+	"測試 看板：立即抓取看板最新文章，以你的關鍵字比對",
+	"",
+	"[關鍵字]",
+	"新增 看板 關鍵字：新增追蹤關鍵字",
+	"刪除 看板 關鍵字：取消追蹤關鍵字，關鍵字為 * 時全部刪除",
+	"範例：新增 gossiping,movie 金城武,結衣",
+	"同時包含：新增 stock 台積電&法說",
+	"排除：新增 stock 台積電&!公告",
+	"正規表示式：新增 stock regexp:^\\[新聞\\]",
+	"",
+	"[推文]",
+	"新增推文 網址：有新推文時通知",
+	"刪除推文 網址：取消追蹤推文",
+	"推文清單：追蹤中的文章",
+	"清理推文：刪除已失效的追蹤",
+	"範例：新增推文 https://www.ptt.cc/bbs/EZsoft/M.1497363598.A.74E.html",
+}, "\n")
+
+var (
+	keywordRe   = regexp.MustCompile(`^(新增|刪除)\s+(\S+?):?\s+(\S.*)$`)
+	boardNameRe = regexp.MustCompile(`^[\w.-]+$`)
+	articleRe   = regexp.MustCompile(`^(新增推文|刪除推文)\s+https?://www\.ptt\.cc/bbs/([\w.-]+)/([MG]\.\d+\.A\.[0-9A-Za-z]+)\.html\s*$`)
+	testRe      = regexp.MustCompile(`^測試\s+([\w.-]+)$`)
+)
+
+// Handler handles commands of users
+type Handler struct {
+	// Accounts are users allowed to use the bot, keyword index is built from them
+	Accounts []string
+	Health   *health.Tracker
+
+	CheckBoard   func(name string) error
+	FetchBoard   func(name string) (article.Articles, error)
+	FetchArticle func(board, code string) (article.Article, error)
 }
 
-// Commands is commands documents
-var Commands = map[string]map[string]string{
-	"一般": {
-		"指令": "可使用的指令清單",
-		"清單": "設定的看板、關鍵字、作者",
-		"排行": "前五名追蹤的關鍵字、作者",
-	},
-	"關鍵字相關": {
-		"新增 看板 關鍵字": "新增追蹤關鍵字",
-		"刪除 看板 關鍵字": "取消追蹤關鍵字",
-		"範例":        "新增 gossiping,movie 金城武,結衣",
-	},
-	"作者相關": {
-		"新增作者 看板 作者": "新增追蹤作者",
-		"刪除作者 看板 作者": "取消追蹤作者",
-		"範例":         "新增作者 gossiping ffaarr,obov",
-	},
-	"推噓文數相關": {
-		"新增(推/噓)文數 看板 總數": "通知推或噓文數",
-		"範例":              "新增推文數 joke,beauty 10",
-		"歸零即刪除":           "新增噓文數 joke 0",
-	},
-	"推文相關": {
-		"新增推文 網址": "新增推文追蹤",
-		"刪除推文 網址": "刪除推文追蹤",
-		"範例":      "新增推文 https://www.ptt.cc/bbs/EZsoft/M.1497363598.A.74E.html",
-	},
-	"進階應用": {
-		"參考連結": "https://pttalertor.dinolai.com/docs",
-	},
+// NewHandler creates Handler fetching from ptt
+func NewHandler(accounts []string, tracker *health.Tracker) *Handler {
+	return &Handler{
+		Accounts:     accounts,
+		Health:       tracker,
+		CheckBoard:   board.CheckExist,
+		FetchBoard:   board.Fetch,
+		FetchArticle: web.FetchArticle,
+	}
 }
 
-var commandActionMap = map[string]updateAction{
-	"新增":    addKeywords,
-	"刪除":    removeKeywords,
-	"新增作者":  addAuthors,
-	"刪除作者":  removeAuthors,
-	"新增推文":  addArticles,
-	"刪除推文":  removeArticles,
-	"新增推文數": updatePushUp,
-	"新增噓文數": updatePushDown,
-}
-
-// HandleCommand handles command from chatbot
-func HandleCommand(text string, userID string, isUser bool) string {
+// Handle handles text from account in chat, returns reply
+func (h *Handler) Handle(account string, chatID int64, text string) string {
+	text = strings.TrimSpace(text)
+	if err := h.register(account, chatID); err != nil {
+		log.WithError(err).WithField("account", account).Error("Register User Failed")
+		return "讀取使用者資料" + failedMsg
+	}
 	fields := strings.Fields(text)
 	if len(fields) == 0 {
-		return stringCommands()
+		return Help
 	}
-	command := strings.ToLower(fields[0])
-	if isUser {
-		log.WithFields(log.Fields{
-			"account": userID,
-			"command": command,
-		}).Info("Command Request")
-	}
-	switch command {
-	case "debug":
-		return handleDebug(userID)
-	case "清單", "list":
-		return handleList(userID)
-	case "指令", "help":
-		return stringCommands()
-	case "排行", "ranking":
-		return listTop()
+	log.WithFields(log.Fields{"account": account, "command": fields[0]}).Info("Command")
+
+	switch fields[0] {
+	case "指令", "help", "/help", "/start":
+		return Help
+	case "清單", "list", "/list":
+		return h.list(account)
+	case "狀態", "/status":
+		return StatusText(h.Health.Snapshot())
+	case "測試":
+		args := testRe.FindStringSubmatch(text)
+		if args == nil {
+			return "格式錯誤。範例：測試 stock"
+		}
+		return h.test(account, args[1])
 	case "新增", "刪除":
-		re := regexp.MustCompile("^(新增|刪除)\\s+([^,，][\\w-_,，\\.]*[^,，:\\s]):?\\s+(\\*|.*[^\\s])")
-		if matched := re.MatchString(text); !matched {
-			errorTips := inputErrorTips
-			additionalTips := []string{
-				"正確範例：",
-				command + " gossiping,lol 問卦,爆卦",
-			}
-			errorTips = append(errorTips, additionalTips...)
-			return strings.Join(errorTips, "\n")
+		args := keywordRe.FindStringSubmatch(text)
+		if args == nil {
+			return "格式錯誤，需以空白分隔動作、看板、關鍵字。\n範例：" + fields[0] + " gossiping,movie 金城武,結衣"
 		}
-		args := re.FindStringSubmatch(text)
-		result, err := handleKeyword(command, userID, args[2], args[3])
-		if err != nil {
-			return err.Error()
-		}
-		return result
-	case "新增作者", "刪除作者":
-		re := regexp.MustCompile("^(新增作者|刪除作者)\\s+([^,，][\\w-_,，\\.]*[^,，:\\s]):?\\s+(\\*|[\\s,\\w]+)$")
-		matched := re.MatchString(text)
-		if !matched {
-			errorTips := inputErrorTips
-			additionalTips := []string{
-				"4. 作者為半形英文與數字組成。",
-				"正確範例：",
-				command + " gossiping,lol ffaarr,obov",
-			}
-			errorTips = append(errorTips, additionalTips...)
-			return strings.Join(errorTips, "\n")
-		}
-		args := re.FindStringSubmatch(text)
-		result, err := handleAuthor(command, userID, args[2], args[3])
-		if err != nil {
-			return err.Error()
-		}
-		return result
-	case "新增推文數", "新增噓文數":
-		re := regexp.MustCompile("^(新增推文數|新增噓文數)\\s+([^,，][\\w-_,，\\.]*[^,，:\\s]):?\\s+(100|[1-9][0-9]|[0-9])$")
-		matched := re.MatchString(text)
-		if !matched {
-			errorTips := inputErrorTips
-			additionalTips := []string{
-				"4. 推噓文數需為介於 0-100 的數字",
-				"正確範例：",
-				command + " gossiping,beauty 100",
-			}
-			errorTips = append(errorTips, additionalTips...)
-			return strings.Join(errorTips, "\n")
-		}
-		args := re.FindStringSubmatch(text)
-		result, err := handlePushSum(command, userID, args[2], args[3])
-		if err != nil {
-			return err.Error()
-		}
-		return result
+		return h.keywords(account, args[1], args[2], args[3])
 	case "新增推文", "刪除推文":
-		re := regexp.MustCompile("^(新增推文|刪除推文)\\s+https?://www.ptt.cc/bbs/([\\w-_]*)/(M\\.\\d+.A.\\w*)\\.html$")
-		matched := re.MatchString(text)
-		if !matched {
-			errorTips := []string{
-				"指令格式錯誤。",
-				"1. 網址與指令需至少一個空白。",
-				"2. 網址錯誤格式。",
-				"正確範例：",
-				command + " https://www.ptt.cc/bbs/EZsoft/M.1497363598.A.74E.html",
-			}
-			return strings.Join(errorTips, "\n")
+		args := articleRe.FindStringSubmatch(text)
+		if args == nil {
+			return "格式錯誤，網址需為 PTT 文章網址。\n範例：" + fields[0] + " https://www.ptt.cc/bbs/EZsoft/M.1497363598.A.74E.html"
 		}
-		args := re.FindStringSubmatch(text)
-		result, err := handleComment(command, userID, args[2], args[3])
-		if err != nil {
-			return err.Error()
+		if args[1] == "新增推文" {
+			return h.addArticle(account, args[2], args[3])
 		}
-		return result
-	case "清理推文":
-		return cleanCommentList(userID)
+		return h.removeArticle(account, args[3])
 	case "推文清單":
-		return handleCommentList(userID)
-	case "add", "del":
-		return handleCommandLine(userID, command, text)
-	}
-	if !isUser {
-		return ""
+		return h.articleList(account)
+	case "清理推文":
+		return h.cleanArticles(account)
 	}
 	return "無此指令，請打「指令」查看指令清單"
 }
 
-func handleCommandLine(userID, command, text string) string {
-	var keywordStr, authorStr, push, boo string
-	cl := flag.NewFlagSet("Ptt Alertor: <add|del> <-flag <argument>> <board> [board...]\nexample: add -k ptt -a chodino -p 10 ezsoft", flag.ContinueOnError)
-	bf := new(bytes.Buffer)
-	cl.SetOutput(bf)
-	cl.StringVar(&keywordStr, "keyword", "", "keywords: <keyword>[,keyword...]")
-	cl.StringVar(&keywordStr, "k", "", "abbr. of keyword")
-	cl.StringVar(&authorStr, "author", "", "authors: <author>[,author...]")
-	cl.StringVar(&authorStr, "a", "", "abbr. of author")
-	cl.StringVar(&push, "push", "", "number of push's sum: <sum>")
-	cl.StringVar(&push, "p", "", "abbr. of push")
-	cl.StringVar(&boo, "boo", "", "number of boo's sum: <sum>")
-	cl.StringVar(&boo, "b", "", "abbr. of boo")
-
-	args := strings.Fields(text)
-	err := cl.Parse(args[1:])
-	boardStrs := cl.Args()
-	for i := 0; i < len(boardStrs); i++ {
-		boardStrs[i] = strings.TrimSpace(strings.Trim(boardStrs[i], ","))
+func (h *Handler) register(account string, chatID int64) error {
+	u, err := user.Find(account)
+	if err == nil && u.Profile.TelegramChat == chatID {
+		return nil
 	}
-	boardStr := strings.Join(boardStrs, ",")
-	if bf.Len() != 0 {
-		return bf.String()
-	}
-	if cl.NFlag() == 0 {
-		return "未指定參數。輸入 " + command + " -h 查看參數列表。"
-	}
-	if boardStr == "" {
-		errorTips := []string{
-			"未指定板名。",
-			"範例：add -k ptt -a chodino -p 10 ezsoft",
-			"輸入 " + command + " -h 查看提示訊息。",
-		}
-		return strings.Join(errorTips, "\n")
-	}
-
-	log.WithField("command", text).Info("Command Line Request")
-
-	var commandPrefix string
-	switch command {
-	case "add":
-		commandPrefix = "新增"
-	case "del":
-		commandPrefix = "刪除"
-	}
-
-	var errMsgs myutil.StringSlice
-	if keywordStr != "" {
-		command = commandPrefix
-		_, err = handleKeyword(command, userID, boardStr, keywordStr)
-		if err != nil {
-			errMsgs.AppendNonRepeatElement(err.Error(), false)
-		}
-	}
-	if authorStr != "" {
-		command = commandPrefix + "作者"
-		_, err = handleAuthor(command, userID, boardStr, authorStr)
-		if err != nil {
-			errMsgs.AppendNonRepeatElement(err.Error(), false)
-		}
-	}
-	if push != "" {
-		if commandPrefix == "刪除" {
-			push = "0"
-		}
-		command = "新增推文數"
-		_, err = handlePushSum(command, userID, boardStr, push)
-		if err != nil {
-			errMsgs.AppendNonRepeatElement(err.Error(), false)
-		}
-	}
-	if boo != "" {
-		if commandPrefix == "刪除" {
-			boo = "0"
-		}
-		command = "新增噓文數"
-		_, err = handlePushSum(command, userID, boardStr, boo)
-		if err != nil {
-			errMsgs.AppendNonRepeatElement(err.Error(), false)
-		}
-	}
-	if len(errMsgs) != 0 {
-		return strings.Join([]string(errMsgs), "\n")
-	}
-	return commandPrefix + "成功。"
-}
-
-func handleDebug(account string) string {
-	return models.User().Find(account).Profile.Account
-}
-
-func handleList(account string) string {
-	subs := models.User().Find(account).Subscribes
-	if len(subs) == 0 {
-		return "尚未建立清單。請打「指令」查看新增方法。"
-	}
-	return subs.String()
-}
-
-func cleanCommentList(account string) string {
-	var i int
-	for _, sub := range models.User().Find(account).Subscribes {
-		for _, code := range sub.Articles {
-			article := models.Article()
-			article.Code = code
-			bl, err := article.Exist()
-			if err != nil {
-				return "清理推文失敗，請洽至粉絲團或 LINE 首頁留言。"
-			}
-			if !bl {
-				update(removeArticles, account, []string{sub.Board}, code)
-				i++
-			}
-		}
-	}
-	return fmt.Sprintf("清理 %d 則推文", i)
-}
-
-func handleCommentList(account string) string {
-	subs := models.User().Find(account).Subscribes
-	if len(subs) == 0 {
-		return "尚未建立清單。請打「指令」查看新增方法。"
-	}
-	return "推文追蹤清單，上限 50 篇：\n" + subs.StringCommentList() + "\n輸入「清理推文」，可刪除無效連結。"
-}
-
-func stringCommands() string {
-	str := ""
-	for cat, cmds := range Commands {
-		str += "[" + cat + "]\n"
-		for cmd, doc := range cmds {
-			str += cmd
-			if doc != "" {
-				str += "：" + doc
-			}
-			str += "\n"
-		}
-		str += "\n"
-	}
-	return strings.TrimSpace(str)
-}
-
-func listTop() string {
-	content := "關鍵字"
-	for i, keyword := range top.ListKeywords(5) {
-		content += fmt.Sprintf("\n%d. %s", i+1, keyword)
-	}
-	content += "\n----\n作者"
-	for i, author := range top.ListAuthors(5) {
-		content += fmt.Sprintf("\n%d. %s", i+1, author)
-	}
-	content += "\n----\n推噓文"
-	for i, pushSum := range top.ListPushSum(5) {
-		content += fmt.Sprintf("\n%d. %s", i+1, pushSum)
-	}
-	content += "\n\nTOP 100:\nhttp://pttalertor.dinolai.com/top"
-	return content
-}
-
-func handleKeyword(command, userID, board, keywordStr string) (string, error) {
-	boardNames := splitParamString(board)
-	input := keywordStr
-	var inputs []string
-	if strings.HasPrefix(input, "regexp:") {
-		if !checkRegexp(input) {
-			return "", errors.New("正規表示式錯誤，請檢查規則。")
-		}
-		inputs = []string{keywordStr}
-	} else {
-		inputs = splitParamString(keywordStr)
-	}
-	log.WithFields(log.Fields{
-		"id":      userID,
-		"command": command,
-		"boards":  boardNames,
-		"words":   inputs,
-	}).Info("Keyword Command")
-	err := update(commandActionMap[command], userID, boardNames, inputs...)
-	if msg, ok := checkBoardError(err); ok {
-		return "", errors.New(msg)
-	}
-	if err != nil {
-		log.WithError(err).Error("Keyword Command Failed")
-		return "", errors.New(command + updateFailedMsg)
-	}
-	return command + "成功", nil
-}
-
-func handleAuthor(command, userID, board, authorStr string) (string, error) {
-	if ok, _ := regexp.MatchString("^(\\*|[\\s,\\w]+)$", authorStr); !ok {
-		return "", errors.New("作者為半形英文與數字組成。")
-	}
-	boardNames := splitParamString(board)
-	authors := splitParamString(authorStr)
-	log.WithFields(log.Fields{
-		"id":      userID,
-		"command": command,
-		"boards":  boardNames,
-		"words":   authors,
-	}).Info("Author Command")
-	err := update(commandActionMap[command], userID, boardNames, authors...)
-	if msg, ok := checkBoardError(err); ok {
-		return "", errors.New(msg)
-	}
-	if err != nil {
-		log.WithError(err).Error("Author Command Failed")
-		return "", errors.New(command + updateFailedMsg)
-	}
-	return command + "成功", nil
-}
-
-func handlePushSum(command, account, board, sumStr string) (string, error) {
-	if sum, err := strconv.Atoi(sumStr); err != nil || sum < 0 || sum > 100 {
-		return "", errors.New("推噓文數需為介於 0-100 的數字")
-	}
-	boardNames := splitParamString(board)
-	log.WithFields(log.Fields{
-		"id":      account,
-		"command": command,
-		"boards":  boardNames,
-		"words":   sumStr,
-	}).Info("PushSum Command")
-	for _, boardName := range boardNames {
-		if strings.EqualFold(boardName, "allpost") {
-			return "", errors.New("推文數通知不支持 ALLPOST 板。")
-		}
-	}
-	err := update(commandActionMap[command], account, boardNames, sumStr)
-	if msg, ok := checkBoardError(err); ok {
-		return "", errors.New(msg)
-	}
-	if err != nil {
-		log.WithError(err).Error("PushSum Command Failed")
-		return "", errors.New(command + updateFailedMsg)
-	}
-	return command + "成功", nil
-}
-
-func handleComment(command, userID, boardName, articleCode string) (string, error) {
-	log.WithFields(log.Fields{
-		"id":      userID,
-		"command": command,
-		"boards":  boardName,
-		"words":   articleCode,
-	}).Info("Comment Command")
-	if strings.EqualFold(command, "新增推文") {
-		if !checkArticleExist(boardName, articleCode) {
-			return "", errors.New("文章不存在")
-		}
-		if countUserArticles(userID) >= subArticlesLimit {
-			return "", errors.New("推文追蹤最多 50 篇，輸入「推文清單」，整理追蹤列表。")
-		}
-	}
-	err := update(commandActionMap[command], userID, []string{boardName}, articleCode)
-	if err != nil {
-		log.WithError(err).Error("Comment Command Failed")
-		return "", errors.New(command + updateFailedMsg)
-	}
-	return command + "成功", nil
-}
-
-func countUserArticles(account string) (cnt int) {
-	for _, sub := range models.User().Find(account).Subscribes {
-		cnt += len(sub.Articles)
-	}
-	return cnt
-}
-
-func checkArticleExist(boardName, articleCode string) bool {
-	a := models.Article()
-	a.Code = articleCode
-	if bl, _ := a.Exist(); bl {
-		return true
-	}
-	if web.CheckArticleExist(boardName, articleCode) {
-		a.Board = boardName
-		initialArticle(a)
-		return true
-	}
-	return false
-}
-
-func initialArticle(a *article.Article) error {
-	atcl, err := web.FetchArticle(a.Board, a.Code)
-	if err != nil {
+	if err != nil && err != user.ErrNotFound {
 		return err
 	}
-	a.Link = atcl.Link
-	a.Title = atcl.Title
-	a.ID = atcl.ID
-	a.LastPushDateTime = atcl.LastPushDateTime
-	a.Comments = atcl.Comments
-	return a.Save()
+	return user.Register(account, chatID)
 }
 
-func checkBoardError(err error) (string, bool) {
-	if bErr, ok := err.(board.BoardNotExistError); ok {
-		return "板名錯誤，請確認拼字。可能板名：\n" + bErr.Suggestion, true
-	}
-	return "", false
-}
-
-func checkRegexp(input string) bool {
-	pattern := strings.Replace(strings.TrimPrefix(input, "regexp:"), "//", "////", -1)
-	_, err := regexp.Compile(pattern)
+func (h *Handler) list(account string) string {
+	u, err := user.Find(account)
 	if err != nil {
-		return false
+		return "讀取清單" + failedMsg
 	}
-	return true
+	keywords := u.Subscribes.StringKeywords()
+	if keywords == "" {
+		keywords = "（無）"
+	}
+	return fmt.Sprintf("關鍵字\n%s\n----\n推文追蹤 %d 篇，輸入「推文清單」查看。", keywords, u.Subscribes.ArticleCount())
 }
 
-func splitParamString(paramString string) (params []string) {
-	paramString = strings.Trim(paramString, ",，")
-	if !strings.ContainsAny(paramString, ",，") {
-		return []string{paramString}
-	}
-
-	if strings.Contains(paramString, ",") {
-		params = strings.Split(paramString, ",")
-	} else {
-		params = []string{paramString}
-	}
-
-	for i := 0; i < len(params); i++ {
-		if strings.Contains(params[i], "，") {
-			params = append(params[:i], append(strings.Split(params[i], "，"), params[i+1:]...)...)
-			i--
+// splitParams splits comma separated params (half or full width), empty ones are dropped
+func splitParams(s string) []string {
+	var params []string
+	for _, p := range strings.FieldsFunc(s, func(r rune) bool { return r == ',' || r == '，' }) {
+		if p = strings.TrimSpace(p); p != "" {
+			params = append(params, p)
 		}
 	}
-
-	for i, param := range params {
-		params[i] = strings.TrimSpace(param)
-	}
-
 	return params
 }
 
-func update(action updateAction, account string, boardNames []string, inputs ...string) error {
-	u := models.User().Find(account)
-	if boardNames[0] == "**" {
-		boardNames = nil
-		for _, uSub := range u.Subscribes {
-			boardNames = append(boardNames, uSub.Board)
+func (h *Handler) keywords(account, action, boardStr, keywordStr string) string {
+	boards := splitParams(boardStr)
+	for i, b := range boards {
+		if !boardNameRe.MatchString(b) {
+			return "板名格式錯誤：" + b
 		}
+		boards[i] = strings.ToLower(b)
 	}
-	for _, boardName := range boardNames {
-		sub := subscription.Subscription{
-			Board: strings.ToLower(boardName),
-		}
-		err := action(&u, sub, inputs...)
-		if err != nil {
-			return err
-		}
-		err = u.Update()
-		if err != nil {
-			log.WithError(err).Error("Subscription Update Error")
-			return err
-		}
+	if len(boards) == 0 {
+		return "請輸入看板。"
 	}
-	return nil
-}
 
-func HandleLineFollow(id, accountType string) error {
-	u := models.User().Find(id)
-	u.Profile.Line, u.Profile.Type = id, accountType
-	log.WithFields(log.Fields{
-		"id":       id,
-		"type":     accountType,
-		"platform": "line",
-	}).Info("User Join")
-	return handleFollow(u)
-}
-
-func HandleMessengerFollow(id string) error {
-	u := models.User().Find(id)
-	u.Profile.Messenger = id
-	log.WithFields(log.Fields{
-		"id":       id,
-		"platform": "messenger",
-	}).Info("User Join")
-	return handleFollow(u)
-}
-
-func HandleTelegramFollow(id string, chatID int64) error {
-	u := models.User().Find(id)
-	u.Profile.Telegram = id
-	u.Profile.TelegramChat = chatID
-	log.WithFields(log.Fields{
-		"id":       id,
-		"platform": "telegram",
-	}).Info("User Join")
-	return handleFollow(u)
-}
-
-func handleFollow(u user.User) error {
-	if u.Profile.Account != "" {
-		u.Enable = true
-		u.Update()
+	var keywords []string
+	if strings.HasPrefix(keywordStr, "regexp:") {
+		if _, err := regexp.Compile(strings.TrimPrefix(keywordStr, "regexp:")); err != nil {
+			return "正規表示式錯誤：" + err.Error()
+		}
+		keywords = []string{keywordStr}
 	} else {
-		if u.Profile.Messenger != "" {
-			u.Profile.Account = u.Profile.Messenger
-		}
-		if u.Profile.Line != "" {
-			u.Profile.Account = u.Profile.Line
-		}
-		if u.Profile.Telegram != "" {
-			u.Profile.Account = u.Profile.Telegram
-		}
-		u.Enable = true
-		err := u.Save()
-		if err != nil {
-			return err
+		keywords = splitParams(keywordStr)
+	}
+	if len(keywords) == 0 {
+		return "請輸入關鍵字。"
+	}
+
+	// all boards are checked before saving, one wrong board saves nothing
+	if action == "新增" {
+		if msg := h.checkBoards(boards); msg != "" {
+			return msg
 		}
 	}
-	return nil
+	err := user.Update(account, func(u *user.User) error {
+		for _, b := range boards {
+			if action == "新增" {
+				u.Subscribes.AddKeywords(b, keywords)
+			} else {
+				u.Subscribes.RemoveKeywords(b, keywords)
+			}
+		}
+		return nil
+	})
+	if err == nil {
+		err = keyword.Sync(h.Accounts)
+	}
+	if err != nil {
+		log.WithError(err).WithField("account", account).Error("Update Keywords Failed")
+		return action + failedMsg
+	}
+	return action + "成功。\n\n" + h.list(account)
+}
+
+func (h *Handler) checkBoards(boards []string) string {
+	var wrong []string
+	for _, b := range boards {
+		err := h.CheckBoard(b)
+		if err == nil {
+			continue
+		}
+		msg := b
+		if !errors.Is(err, board.ErrNotExist) {
+			msg += "（" + err.Error() + "）"
+		} else if s := board.Suggest(b); s != "" && !strings.EqualFold(s, b) {
+			msg += "（是不是 " + s + "？）"
+		}
+		wrong = append(wrong, msg)
+	}
+	if len(wrong) == 0 {
+		return ""
+	}
+	return "板名錯誤，未做任何變更：\n" + strings.Join(wrong, "\n")
+}
+
+func (h *Handler) addArticle(account, boardName, code string) string {
+	u, err := user.Find(account)
+	if err != nil {
+		return "新增推文" + failedMsg
+	}
+	if u.Subscribes.HasArticle(code) {
+		return "已在追蹤這篇文章。"
+	}
+	if u.Subscribes.ArticleCount() >= articlesLimit {
+		return fmt.Sprintf("推文追蹤最多 %d 篇，輸入「推文清單」整理追蹤列表。", articlesLimit)
+	}
+
+	a, tracked := article.Find(code)
+	if !tracked {
+		online, err := h.FetchArticle(boardName, code)
+		if _, ok := err.(web.URLNotFoundError); ok {
+			return "文章不存在。"
+		}
+		if err != nil {
+			return "抓取文章失敗：" + err.Error()
+		}
+		// comments so far are the base, only later ones are sent
+		a = article.Article{
+			ID:           online.ID,
+			Code:         code,
+			Title:        online.Title,
+			Link:         online.Link,
+			Board:        online.Board,
+			CommentCount: len(online.Comments),
+		}
+		if err := a.Save(); err != nil {
+			log.WithError(err).WithField("code", code).Error("Save Article Failed")
+			return "新增推文" + failedMsg
+		}
+	}
+	err = article.Track(code, account)
+	if err == nil {
+		err = user.Update(account, func(u *user.User) error {
+			u.Subscribes.AddArticle(a.Board, code)
+			return nil
+		})
+	}
+	if err != nil {
+		log.WithError(err).WithField("code", code).Error("Track Article Failed")
+		return "新增推文" + failedMsg
+	}
+	return "新增推文成功：" + a.Title
+}
+
+func (h *Handler) removeArticle(account, code string) string {
+	var removed bool
+	err := user.Update(account, func(u *user.User) error {
+		removed = u.Subscribes.RemoveArticle(code)
+		return nil
+	})
+	if err == nil {
+		err = article.Untrack(code, account)
+	}
+	if err != nil {
+		log.WithError(err).WithField("code", code).Error("Untrack Article Failed")
+		return "刪除推文" + failedMsg
+	}
+	if !removed {
+		return "沒有追蹤這篇文章。"
+	}
+	return "刪除推文成功。"
+}
+
+func (h *Handler) articleList(account string) string {
+	u, err := user.Find(account)
+	if err != nil {
+		return "讀取推文清單" + failedMsg
+	}
+	if u.Subscribes.ArticleCount() == 0 {
+		return "尚未追蹤任何文章。請打「指令」查看新增方法。"
+	}
+	return fmt.Sprintf("推文追蹤清單（%d/%d）：\n%s\n\n輸入「清理推文」可刪除失效的追蹤。",
+		u.Subscribes.ArticleCount(), articlesLimit, u.Subscribes.StringArticles())
+}
+
+// cleanArticles removes tracking of articles which are no longer checked (e.g. data lost)
+func (h *Handler) cleanArticles(account string) string {
+	var cleaned int
+	err := user.Update(account, func(u *user.User) error {
+		var codes []string
+		for _, s := range u.Subscribes {
+			codes = append(codes, s.Articles...)
+		}
+		for _, code := range codes {
+			if _, ok := article.Find(code); ok {
+				continue
+			}
+			if err := article.Untrack(code, account); err != nil {
+				return err
+			}
+			u.Subscribes.RemoveArticle(code)
+			cleaned++
+		}
+		return nil
+	})
+	if err != nil {
+		log.WithError(err).WithField("account", account).Error("Clean Articles Failed")
+		return "清理推文" + failedMsg
+	}
+	return fmt.Sprintf("清理 %d 則推文追蹤。", cleaned)
+}
+
+// test fetches latest articles of board now and matches keywords of account,
+// saved articles are untouched so checking is not affected
+func (h *Handler) test(account, boardName string) string {
+	boardName = strings.ToLower(boardName)
+	articles, err := h.FetchBoard(boardName)
+	if err != nil {
+		return fmt.Sprintf("❌ %s 抓取失敗：%s", boardName, err)
+	}
+	latest := make(article.Articles, len(articles))
+	copy(latest, articles)
+	sort.SliceStable(latest, func(i, j int) bool { return latest[i].ID > latest[j].ID })
+
+	lines := []string{fmt.Sprintf("✅ %s 抓取成功，共 %d 篇。", boardName, len(articles))}
+	if len(latest) > 0 {
+		lines = append(lines, "最新：", latest[0].String())
+	}
+
+	u, err := user.Find(account)
+	if err != nil {
+		return strings.Join(append(lines, "", "讀取關鍵字"+failedMsg), "\n")
+	}
+	sub, _ := u.Subscribes.Find(boardName)
+	if len(sub.Keywords) == 0 {
+		return strings.Join(append(lines, "", "你在 "+boardName+" 沒有設定關鍵字。"), "\n")
+	}
+	for _, kw := range sub.Keywords {
+		matched := latest.Match(kw)
+		lines = append(lines, "", fmt.Sprintf("「%s」命中 %d 篇", kw, len(matched)))
+		if len(matched) > testShowLimit {
+			matched = matched[:testShowLimit]
+		}
+		for _, a := range matched {
+			lines = append(lines, a.String())
+		}
+	}
+	return strings.Join(lines, "\n")
 }

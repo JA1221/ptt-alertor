@@ -5,177 +5,156 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
+	"strings"
+	"sync"
 	"syscall"
 	"time"
 
 	log "github.com/Ptt-Alertor/logrus"
-	"github.com/google/gops/agent"
-	"github.com/julienschmidt/httprouter"
-	"github.com/robfig/cron"
 
-	"github.com/Ptt-Alertor/ptt-alertor/channels/line"
-	"github.com/Ptt-Alertor/ptt-alertor/channels/messenger"
 	"github.com/Ptt-Alertor/ptt-alertor/channels/telegram"
+	"github.com/Ptt-Alertor/ptt-alertor/command"
+	"github.com/Ptt-Alertor/ptt-alertor/config"
 	"github.com/Ptt-Alertor/ptt-alertor/connections"
-	ctrlr "github.com/Ptt-Alertor/ptt-alertor/controllers"
+	"github.com/Ptt-Alertor/ptt-alertor/health"
 	"github.com/Ptt-Alertor/ptt-alertor/jobs"
+	"github.com/Ptt-Alertor/ptt-alertor/models/board"
+	"github.com/Ptt-Alertor/ptt-alertor/models/keyword"
+	pttweb "github.com/Ptt-Alertor/ptt-alertor/ptt/web"
+	"github.com/Ptt-Alertor/ptt-alertor/web"
 )
-
-var (
-	telegramToken = os.Getenv("TELEGRAM_TOKEN")
-	authUser      = os.Getenv("AUTH_USER")
-	authPassword  = os.Getenv("AUTH_PW")
-)
-
-type myRouter struct {
-	httprouter.Router
-}
-
-func (mr myRouter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	log.WithFields(log.Fields{
-		"method": r.Method,
-		"IP":     r.RemoteAddr,
-		"URI":    r.URL.Path,
-	}).Info("visit")
-	mr.Router.ServeHTTP(w, r)
-}
-
-func newRouter() *myRouter {
-	r := &myRouter{
-		Router: *httprouter.New(),
-	}
-	r.NotFound = http.FileServer(http.Dir("public"))
-	return r
-}
-
-func basicAuth(handle httprouter.Handle) httprouter.Handle {
-	return func(w http.ResponseWriter, r *http.Request, params httprouter.Params) {
-		user, password, hasAuth := r.BasicAuth()
-		if hasAuth && user == authUser && password == authPassword {
-			handle(w, r, params)
-		} else {
-			w.Header().Set("WWW-Authenticate", "Basic realm=Restricted")
-			http.Error(w, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
-		}
-	}
-}
 
 func main() {
-	checkConnections()
-
-	log.Info("Start Jobs")
-	startJobs()
-
-	router := newRouter()
-	m := messenger.New()
-
-	router.GET("/", ctrlr.Index)
-	router.GET("/messenger", ctrlr.MessengerIndex)
-	router.GET("/line", ctrlr.LineIndex)
-	router.GET("/telegram", ctrlr.TelegramIndex)
-	router.GET("/redirect/:checksum", ctrlr.Redirect)
-	router.GET("/top", ctrlr.Top)
-	router.GET("/docs", ctrlr.Docs)
-
-	// websocket
-	router.GET("/ws", ctrlr.WebSocket)
-
-	router.POST("/broadcast", basicAuth(ctrlr.Broadcast))
-
-	// boards apis
-	router.GET("/boards/:boardName/articles/:code", ctrlr.BoardArticle)
-	router.GET("/boards/:boardName/articles", ctrlr.BoardArticleIndex)
-	router.GET("/boards", ctrlr.BoardIndex)
-
-	// keyword apis
-	router.GET("/keyword/boards", ctrlr.KeywordBoards)
-
-	// author apis
-	router.GET("/author/boards", ctrlr.AuthorBoards)
-
-	// pushsum apis
-	router.GET("/pushsum/boards", ctrlr.PushSumBoards)
-
-	// articles apis
-	router.GET("/articles", ctrlr.ArticleIndex)
-
-	// users apis
-	router.GET("/users/:account", basicAuth(ctrlr.UserFind))
-	router.GET("/users", basicAuth(ctrlr.UserAll))
-	router.POST("/users", basicAuth(ctrlr.UserCreate))
-	router.PUT("/users/:account", basicAuth(ctrlr.UserModify))
-
-	// line
-	router.POST("/line/callback", line.HandleRequest)
-	router.POST("/line/notify/callback", line.CatchCallback)
-
-	// facebook messenger
-	router.GET("/messenger/webhook", m.Verify)
-	router.POST("/messenger/webhook", m.Received)
-
-	// telegram
-	if telegramToken != "" {
-		router.POST("/telegram/"+telegramToken, telegram.HandleRequest)
+	cfg, err := config.Load()
+	if err != nil {
+		log.WithError(err).Fatal("Config Invalid")
+	}
+	if len(cfg.AllowedIDs) == 0 {
+		log.Warn("TELEGRAM_ALLOWED_IDS Is Empty, Nobody Can Use the Bot. Send Any Message to the Bot to Get Your ID")
+	}
+	accounts := make([]string, 0, len(cfg.AllowedIDs))
+	for _, id := range cfg.AllowedIDs {
+		accounts = append(accounts, strconv.FormatInt(id, 10))
 	}
 
-	// gops agent
-	if err := agent.Listen(agent.Options{Addr: ":6060", ShutdownCleanup: true}); err != nil {
-		log.Fatal(err)
-	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
-	// Web Server
-	log.Info("Web Server Start on Port 9090")
-	srv := http.Server{
-		Addr:    ":9090",
-		Handler: router,
+	if !waitRedis(ctx) {
+		return
+	}
+	// checking boards follow subscriptions of allowed users
+	if err := keyword.Sync(accounts); err != nil {
+		log.WithError(err).Fatal("Sync Keyword Index Failed")
+	}
+	log.WithField("boards", board.List()).Info("Checking Boards")
+
+	tracker := health.New()
+	handler := command.NewHandler(accounts, tracker)
+	srv := &http.Server{
+		Addr:              cfg.HTTPAddr,
+		Handler:           (&web.Server{Health: tracker, Accounts: accounts}).Handler(),
+		ReadHeaderTimeout: 10 * time.Second,
 	}
 	go func() {
-		if err := srv.ListenAndServe(); err != nil {
-			log.Fatal("ListenAndServer", err)
+		log.WithField("addr", cfg.HTTPAddr).Info("HTTP Server Start")
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.WithError(err).Fatal("HTTP Server Failed")
 		}
 	}()
 
-	// graceful shutdown
-	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
-	<-quit
-	log.Info("Shutdown Web Server...")
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	bot := connectTelegram(ctx, cfg, handler, tracker)
+	if bot == nil {
+		return
+	}
+	log.Info("Telegram Authorized on " + bot.UserName())
+
+	var wg sync.WaitGroup
+	run := func(f func(ctx context.Context)) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			f(ctx)
+		}()
+	}
+	run(bot.Run)
+	run((&jobs.BoardChecker{
+		Fetch:    board.Fetch,
+		Notifier: bot,
+		Health:   tracker,
+		Interval: 1 * time.Second,
+		Cycle:    15 * time.Second,
+	}).Run)
+	run((&jobs.CommentChecker{
+		FetchArticle: pttweb.FetchArticle,
+		Notifier:     bot,
+		Health:       tracker,
+		Interval:     1 * time.Second,
+		Cycle:        time.Minute,
+	}).Run)
+	run((&jobs.PTTMonitor{
+		Health: tracker,
+		Client: &http.Client{Timeout: 30 * time.Second},
+	}).Run)
+	run((&jobs.Alerter{
+		Health:   tracker,
+		Notifier: bot,
+		Owners:   cfg.AllowedIDs,
+		Interval: 30 * time.Second,
+	}).Run)
+
+	<-ctx.Done()
+	log.Info("Shutting Down")
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if err := srv.Shutdown(ctx); err != nil {
-		log.WithError(err).Fatal("Web Server Showdown Failed")
+	srv.Shutdown(shutdownCtx)
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	// telegram long polling may not return until its timeout
+	select {
+	case <-done:
+	case <-shutdownCtx.Done():
+		log.Warn("Jobs Not Stopped in Time")
 	}
-	log.Info("Web Server Was Been Shutdown")
+	log.Info("Bye")
 }
 
-func checkConnections() {
-	conn := connections.Redis()
-	defer conn.Close()
-	if _, err := conn.Do("PING"); err != nil {
-		log.WithError(err).Fatal("Redis Connect Failed, Check REDIS_ENDPOINT and REDIS_PORT")
+// waitRedis waits until redis is reachable, false when ctx is done first
+func waitRedis(ctx context.Context) bool {
+	for {
+		err := connections.PingRedis()
+		if err == nil {
+			return true
+		}
+		log.WithError(err).WithField("addr", connections.RedisAddr()).Warn("Redis Unreachable, Retry")
+		select {
+		case <-ctx.Done():
+			return false
+		case <-time.After(3 * time.Second):
+		}
 	}
-	connections.EnsureDynamoDBTables()
 }
 
-func startJobs() {
-	go jobs.NewChecker().Run()
-	go jobs.NewPushSumChecker().Run()
-	go jobs.NewCommentChecker().Run()
-	go jobs.NewPttMonitor().Run()
-	c := cron.New()
-	c.AddJob("@hourly", jobs.NewTop())
-	c.AddJob("@every 48h", jobs.NewPushSumKeyReplacer())
-	c.Start()
-}
-
-func init() {
-	// for initial app
-	// jobs.NewPushSumKeyReplacer().Run()
-	// jobs.NewMigrateBoard(map[string]string{}).Run()
-	// jobs.NewTop().Run()
-	// jobs.NewCacheCleaner().Run()
-	// jobs.NewGenerator().Run()
-	// jobs.NewFetcher().Run()
-	// jobs.NewMigrateDB().Run()
-	// jobs.NewCategoryCleaner().Run()
+// connectTelegram retries until connected, nil when ctx is done first
+func connectTelegram(ctx context.Context, cfg config.Config, handler *command.Handler, tracker *health.Tracker) *telegram.Bot {
+	for {
+		bot, err := telegram.New(cfg.TelegramToken, cfg.AllowedIDs, handler.Handle, tracker)
+		if err == nil {
+			return bot
+		}
+		if strings.Contains(err.Error(), "Unauthorized") {
+			log.WithError(err).Fatal("TELEGRAM_TOKEN Invalid")
+		}
+		tracker.TelegramPolled(err)
+		log.WithError(err).Error("Telegram Connect Failed, Retry")
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-time.After(10 * time.Second):
+		}
+	}
 }

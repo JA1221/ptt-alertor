@@ -1,4 +1,3 @@
-# Local development: app + Redis + DynamoDB Local
 # usage: cp .env.example .env && docker compose up -d --build
 services:
   app:
@@ -6,20 +5,21 @@ services:
     restart: unless-stopped
     depends_on:
       - redis
-      - dynamodb
     env_file:
       - path: .env
         required: false
     environment:
       REDIS_ENDPOINT: redis
       REDIS_PORT: "6379"
-      DYNAMODB_ENDPOINT: http://dynamodb:8000
-      AWS_REGION: ${AWS_REGION:-us-west-2}
-      AWS_ACCESS_KEY_ID: local
-      AWS_SECRET_ACCESS_KEY: local
-      APP_HOST: ${APP_HOST:-http://localhost:9090}
+      TZ: ${TZ:-Asia/Taipei}
     ports:
+      # status page, local only
       - "127.0.0.1:9090:9090"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9090/health"]
+      interval: 1m
+      timeout: 10s
+      start_period: 1m
 
   redis:
     image: redis:7.2-alpine
@@ -30,18 +30,5 @@ services:
     ports:
       - "127.0.0.1:6379:6379"
 
-  dynamodb:
-    image: amazon/dynamodb-local:2.5.2
-    restart: unless-stopped
-    # root is needed to write into the named volume
-    user: root
-    command: -jar DynamoDBLocal.jar -sharedDb -dbPath /home/dynamodblocal/data
-    working_dir: /home/dynamodblocal
-    volumes:
-      - dynamodb-data:/home/dynamodblocal/data
-    ports:
-      - "127.0.0.1:8000:8000"
-
 volumes:
   redis-data:
-  dynamodb-data:

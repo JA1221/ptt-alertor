@@ -1,83 +1,79 @@
 package user
 
 import (
-	"reflect"
+	"os"
 	"testing"
+
+	"github.com/Ptt-Alertor/ptt-alertor/connections"
+	"github.com/Ptt-Alertor/ptt-alertor/internal/redistest"
 )
 
-func TestUser_All(t *testing.T) {
-	tests := []struct {
-		name   string
-		u      User
-		wantUs []*User
-	}{
-		{"ok", User{drive: new(Mock)}, []*User{
-			&User{Profile: Profile{Account: "dinos80152@gmail.com"}, drive: new(Mock)},
-		}},
+func TestMain(m *testing.M) {
+	os.Exit(redistest.Run(m))
+}
+
+func TestFindOldFormat(t *testing.T) {
+	redistest.Flush()
+	conn := connections.Redis()
+	defer conn.Close()
+	old := `{"enable":true,"Profile":{"account":"123","email":"","line":"","lineAccessToken":"","messenger":"","telegram":"123","telegramChat":456},` +
+		`"Subscribes":[{"board":"stock","keywords":["台積電"],"authors":["abc"],"articles":null,"pushSum":{"up":10,"down":0}}]}`
+	if _, err := conn.Do("SET", "user:123", old); err != nil {
+		t.Fatal(err)
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if gotUs := tt.u.All(); !reflect.DeepEqual(gotUs, tt.wantUs) {
-				t.Errorf("User.All() = %v, want %v", gotUs[0], tt.wantUs[0])
-			}
-		})
+
+	u, err := Find("123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u.ChatID() != 456 || len(u.Subscribes) != 1 || u.Subscribes[0].Keywords[0] != "台積電" {
+		t.Errorf("Find() = %+v", u)
 	}
 }
 
-func TestUser_Save(t *testing.T) {
-	tests := []struct {
-		name    string
-		u       User
-		wantErr bool
-	}{
-		{"ok", User{Profile: Profile{Account: "liam.lai@gmail.com", Email: "liam.lai@gmail.com"}, drive: new(Mock)}, false},
-		{"duplicate", User{Profile: Profile{Account: "dinos80152@gmail.com", Email: "dinos80152@gmail.com"}, drive: new(Mock)}, true},
-		{"not enough data", User{Profile: Profile{Account: "dinos80152@gmail.com"}, drive: new(Mock)}, true},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if err := tt.u.Save(); (err != nil) != tt.wantErr {
-				t.Errorf("User.Save() error = %v, wantErr %v", err, tt.wantErr)
-			}
-		})
+func TestFindNotFound(t *testing.T) {
+	redistest.Flush()
+	if _, err := Find("404"); err != ErrNotFound {
+		t.Errorf("Find() err = %v, want ErrNotFound", err)
 	}
 }
 
-func TestUser_Update(t *testing.T) {
-	tests := []struct {
-		name    string
-		u       User
-		wantErr bool
-	}{
-		{"ok", User{Profile: Profile{Account: "dinos80152@gmail.com"}, drive: new(Mock)}, false},
+func TestRegisterAndUpdate(t *testing.T) {
+	redistest.Flush()
+	if err := Register("1", 1); err != nil {
+		t.Fatal(err)
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if err := tt.u.Update(); (err != nil) != tt.wantErr {
-				t.Errorf("User.Update() error = %v, wantErr %v", err, tt.wantErr)
-			}
-		})
+	err := Update("1", func(u *User) error {
+		u.Subscribes.AddKeywords("stock", []string{"a"})
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	u, err := Find("1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !u.Enable || u.Profile.Account != "1" || u.ChatID() != 1 || len(u.Subscribes) != 1 {
+		t.Errorf("user = %+v", u)
+	}
+	accounts, err := Accounts()
+	if err != nil || len(accounts) != 1 || accounts[0] != "1" {
+		t.Errorf("Accounts() = %v, %v", accounts, err)
 	}
 }
 
-func TestUser_Find(t *testing.T) {
-	type args struct {
-		account string
+func TestUpdateNotRegistered(t *testing.T) {
+	redistest.Flush()
+	err := Update("404", func(u *User) error { return nil })
+	if err != ErrNotFound {
+		t.Errorf("Update() err = %v, want ErrNotFound", err)
 	}
-	tests := []struct {
-		name string
-		u    User
-		args args
-		want User
-	}{
-		{"ok", User{drive: new(Mock)}, args{"dinos80152@gmail.com"},
-			User{Profile: Profile{Account: "dinos80152@gmail.com"}, drive: new(Mock)}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := tt.u.Find(tt.args.account); !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("User.Find() = %v, want %v", got, tt.want)
-			}
-		})
+}
+
+func TestChatIDFallsBackToAccount(t *testing.T) {
+	u := User{Profile: Profile{Account: "789"}}
+	if u.ChatID() != 789 {
+		t.Errorf("ChatID() = %d", u.ChatID())
 	}
 }

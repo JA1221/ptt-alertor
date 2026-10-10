@@ -1,55 +1,65 @@
+// Package keyword keeps board -> subscriber accounts index in redis (keyword:<board>:subs),
+// and the checking board list follows it
 package keyword
 
 import (
-	log "github.com/Ptt-Alertor/logrus"
+	"sort"
+	"strings"
+
+	"github.com/gomodule/redigo/redis"
 
 	"github.com/Ptt-Alertor/ptt-alertor/connections"
-	"github.com/Ptt-Alertor/ptt-alertor/myutil"
-	"github.com/garyburd/redigo/redis"
+	"github.com/Ptt-Alertor/ptt-alertor/models/board"
+	"github.com/Ptt-Alertor/ptt-alertor/models/user"
 )
 
-const prefix string = "keyword:"
+const (
+	prefix = "keyword:"
+	suffix = ":subs"
+)
 
-func Subscribers(board string) []string {
-	key := prefix + board + ":subs"
+// Subscribers lists accounts having keywords of board
+func Subscribers(boardName string) ([]string, error) {
 	conn := connections.Redis()
 	defer conn.Close()
-	accounts, err := redis.Strings(conn.Do("SMEMBERS", key))
-	if err != nil {
-		log.WithField("runtime", myutil.BasicRuntimeInfo()).WithError(err).Error()
-	}
-	return accounts
+	return redis.Strings(conn.Do("SMEMBERS", prefix+strings.ToLower(boardName)+suffix))
 }
 
-func AddSubscriber(board, account string) error {
-	key := prefix + board + ":subs"
-	conn := connections.Redis()
-	defer conn.Close()
-	_, err := conn.Do("SADD", key, account)
-	if err != nil {
-		log.WithField("runtime", myutil.BasicRuntimeInfo()).WithError(err).Error()
+// Sync rebuilds index from subscriptions of accounts, and makes checking boards equal to indexed boards
+func Sync(accounts []string) error {
+	index := make(map[string][]string)
+	for _, account := range accounts {
+		u, err := user.Find(account)
+		if err == user.ErrNotFound {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		for _, b := range u.Subscribes.KeywordBoards() {
+			b = strings.ToLower(b)
+			index[b] = append(index[b], account)
+		}
 	}
-	return err
-}
 
-func RemoveSubscriber(board, account string) error {
-	key := prefix + board + ":subs"
 	conn := connections.Redis()
 	defer conn.Close()
-	_, err := conn.Do("SREM", key, account)
+	keys, err := redis.Strings(conn.Do("KEYS", prefix+"*"+suffix))
 	if err != nil {
-		log.WithField("runtime", myutil.BasicRuntimeInfo()).WithError(err).Error()
+		return err
 	}
-	return err
-}
-
-func Destroy(board string) error {
-	key := prefix + board + ":subs"
-	conn := connections.Redis()
-	defer conn.Close()
-	_, err := conn.Do("DEL", key)
-	if err != nil {
-		log.WithField("runtime", myutil.BasicRuntimeInfo()).WithError(err).Error()
+	conn.Send("MULTI")
+	for _, key := range keys {
+		conn.Send("DEL", key)
 	}
-	return err
+	boards := make([]string, 0, len(index))
+	for b, subs := range index {
+		boards = append(boards, b)
+		conn.Send("SADD", redis.Args{prefix + b + suffix}.AddFlat(subs)...)
+	}
+	if _, err := conn.Do("EXEC"); err != nil {
+		return err
+	}
+	sort.Strings(boards)
+	return board.Sync(boards)
 }

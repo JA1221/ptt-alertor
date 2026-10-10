@@ -2,23 +2,19 @@ package web
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
+	"regexp"
+	"strconv"
+	"strings"
 	"time"
 
 	log "github.com/Ptt-Alertor/logrus"
+	"golang.org/x/net/html"
 
 	"github.com/Ptt-Alertor/ptt-alertor/models/article"
 	pttHttp "github.com/Ptt-Alertor/ptt-alertor/ptt/http"
-
-	"regexp"
-
-	"strings"
-
-	"strconv"
-
-	"github.com/Ptt-Alertor/ptt-alertor/models/pushsum"
-	"golang.org/x/net/html"
 )
 
 const pttHostURL = "https://www.ptt.cc"
@@ -61,15 +57,6 @@ func FetchArticles(board string, page int) (articles article.Articles, err error
 	articleBlocks := findNodes(htmlNodes, findArticleBlocks)
 	for _, articleBlock := range articleBlocks {
 		article := article.Article{}
-		for _, pushCountDiv := range findNodes(articleBlock, findPushCountDiv) {
-			if child := pushCountDiv.FirstChild; child != nil {
-				if child := child.FirstChild; child != nil {
-					if err == nil {
-						article.PushSum = pushsum.ConvertPushCount(child.Data)
-					}
-				}
-			}
-		}
 		for _, titleDiv := range findNodes(articleBlock, findTitleDiv) {
 
 			anchors := findNodes(titleDiv, findAnchor)
@@ -285,11 +272,16 @@ func fetchHTML(reqURL string) (doc *html.Node, err error) {
 	}
 
 	if uerr, ok := err.(*url.Error); ok && uerr.Err == errRedirect {
-		req := passR18(reqURL)
-		resp, err = client.Do(req)
+		resp, err = client.Do(passR18(reqURL))
 		if err != nil {
 			return nil, err
 		}
+		defer resp.Body.Close()
+	}
+
+	// error pages (e.g. 429, 5xx) must not be parsed as boards or articles without comments
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("fetch %s: %s", reqURL, resp.Status)
 	}
 
 	doc, err = html.Parse(resp.Body)

@@ -2,145 +2,140 @@ package jobs
 
 import (
 	"context"
-	"sync"
+	"fmt"
 	"time"
 
 	log "github.com/Ptt-Alertor/logrus"
 
-	"fmt"
-
-	"github.com/Ptt-Alertor/ptt-alertor/models"
+	"github.com/Ptt-Alertor/ptt-alertor/health"
 	"github.com/Ptt-Alertor/ptt-alertor/models/article"
+	"github.com/Ptt-Alertor/ptt-alertor/models/user"
+	"github.com/Ptt-Alertor/ptt-alertor/notify"
 	"github.com/Ptt-Alertor/ptt-alertor/ptt/web"
 )
 
-var cmtcker *commentChecker
-var cmtOnce sync.Once
-
-// commentChecker embedding Checker for checking comment
-type commentChecker struct {
-	Checker
-	Article article.Article
-	ch      chan commentChecker
+// CommentChecker checks new comments of tracked articles one by one,
+// rounds never overlap so the same comments are not sent twice
+type CommentChecker struct {
+	FetchArticle func(board, code string) (article.Article, error)
+	Notifier     notify.Notifier
+	Health       *health.Tracker
+	// Interval is pause between articles
+	Interval time.Duration
+	// Cycle is minimum time of checking all articles
+	Cycle time.Duration
 }
 
-// NewCommentChecker return Empty PushChecker pointer
-func NewCommentChecker() *commentChecker {
-	cmtOnce.Do(func() {
-		cmtcker = &commentChecker{}
-		cmtcker.duration = 500 * time.Millisecond
-		cmtcker.done = make(chan struct{})
-		cmtcker.ch = make(chan commentChecker)
-	})
-	return cmtcker
-}
-
-func (cc commentChecker) String() string {
-	return fmt.Sprintf("推文@%s\n\n%s\n%s\n%s", cc.Article.Board, cc.Article.Title, cc.Article.Link, cc.Article.Comments.String())
-}
-
-func (cc commentChecker) Stop() {
-	cc.done <- struct{}{}
+// Run checks tracked articles until ctx is done
+func (c *CommentChecker) Run(ctx context.Context) {
+	log.Info("Comment Checker Start")
+	loop(ctx, c.Cycle, c.round)
 	log.Info("Comment Checker Stop")
 }
 
-// Run start job
-func (cc commentChecker) Run() {
-	ach := make(chan article.Article)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			default:
-				codes := new(article.Articles).List()
-				// avoid busy loop when nothing is subscribed
-				if len(codes) == 0 {
-					time.Sleep(cc.duration)
-				}
-				for _, code := range codes {
-					time.Sleep(cc.duration)
-					go cc.checkComments(code, ach)
-				}
-			}
-		}
-	}()
-
-	for {
-		select {
-		case a := <-ach:
-			cc.Article = a
-			cc.checkSubscribers()
-		case pc := <-cc.ch:
-			ckCh <- pc
-		case <-cc.done:
-			cancel()
-			for len(ach) > 0 {
-				<-ach
-			}
-			return
-		}
-	}
-}
-
-func (cc commentChecker) checkComments(code string, ach chan article.Article) {
-	a := models.Article().Find(code)
-	if a.Board == "" || a.Code == "" {
+func (c *CommentChecker) round(ctx context.Context) {
+	codes, err := article.TrackedCodes()
+	if err != nil {
+		c.Health.CommentsChecked(0, err)
 		return
 	}
-	new, err := web.FetchArticle(a.Board, a.Code)
-	if _, ok := err.(web.URLNotFoundError); ok {
-		cc.destroyComments(a)
-	}
-	if subs, _ := a.Subscribers(); len(subs) == 0 {
-		cc.destroyComments(a)
-	}
-	newComments := make([]article.Comment, 0)
-	if new.LastPushDateTime.After(a.LastPushDateTime) {
-		for _, comment := range new.Comments {
-			if comment.DateTime.After(a.LastPushDateTime) {
-				newComments = append(newComments, comment)
-			}
+	var lastErr error
+	for i, code := range codes {
+		if i > 0 && !sleep(ctx, c.Interval) {
+			return
 		}
-		a.LastPushDateTime = new.LastPushDateTime
-		a.Comments = newComments
-		a.Save()
-		log.WithFields(log.Fields{
-			"board": a.Board,
-			"code":  a.Code,
-		}).Info("Updated Comments")
-		ach <- a
+		if err := c.Check(code); err != nil {
+			log.WithError(err).WithField("code", code).Warn("Comment Check Failed")
+			lastErr = err
+		}
 	}
+	c.Health.CommentsChecked(len(codes), lastErr)
 }
 
-func (cc commentChecker) destroyComments(a article.Article) {
-	if err := a.Destroy(); err != nil {
-		log.WithError(err).Warning("Destroy Comment Failed")
-	}
-	log.WithFields(log.Fields{
-		"board": a.Board,
-		"code":  a.Code,
-	}).Info("Destroy Comments")
+// legacy reports article saved by old versions, which kept comments of last update instead of count
+func legacy(a article.Article) bool {
+	return a.CommentCount == 0 && (len(a.Comments) > 0 || !a.LastPushDateTime.IsZero())
 }
 
-func (cc commentChecker) checkSubscribers() {
-	subs, err := cc.Article.Subscribers()
+// Check fetches article and notifies subscribers of new comments,
+// subscribers are told and tracking stops when the article is deleted
+func (c *CommentChecker) Check(code string) error {
+	saved, ok := article.Find(code)
+	if !ok {
+		return nil
+	}
+	online, err := c.FetchArticle(saved.Board, code)
+	if _, gone := err.(web.URLNotFoundError); gone {
+		return c.stop(saved)
+	}
 	if err != nil {
-		log.WithError(err).Error("Get Subscribers Failed")
+		return err
 	}
 
-	for _, account := range subs {
-		go cc.send(account)
+	var news article.Comments
+	if !legacy(saved) {
+		news = article.NewComments(saved, online)
+	}
+	// count only grows, a broken page with fewer comments must not cause sending old comments again
+	if count := len(online.Comments); count > saved.CommentCount || legacy(saved) {
+		saved.CommentCount = count
+		saved.Comments = nil
+		saved.LastPushDateTime = time.Time{}
+		if saved.Title == "" {
+			saved.Title = online.Title
+		}
+		if saved.Link == "" {
+			saved.Link = online.Link
+		}
+		if err := saved.Save(); err != nil {
+			return err
+		}
+	}
+	if len(news) == 0 {
+		return nil
+	}
+	log.WithFields(log.Fields{"board": saved.Board, "code": code, "count": len(news)}).Info("New Comments")
+	text := fmt.Sprintf("推文@%s\n\n%s\n%s\n\n%s", saved.Board, saved.Title, saved.Link, news.String())
+	c.send(saved, text)
+	return nil
+}
+
+func (c *CommentChecker) send(a article.Article, text string) {
+	accounts, err := article.Subscribers(a.Code)
+	if err != nil {
+		log.WithError(err).WithField("code", a.Code).Error("Get Article Subscribers Failed")
+		return
+	}
+	for _, account := range accounts {
+		u, err := user.Find(account)
+		if err != nil {
+			log.WithError(err).WithField("account", account).Error("Find User Failed")
+			continue
+		}
+		notify.Deliver(c.Notifier, u.ChatID(), text, health.Notification{
+			Account: account,
+			Kind:    health.KindComment,
+			Board:   a.Board,
+			Summary: a.Title,
+		})
 	}
 }
 
-func (cc commentChecker) send(account string) {
-	cc.board = cc.Article.Board
-	cc.subType = "push"
-	cc.word = cc.Article.Code
-	cc.Profile = models.User().Find(account).Profile
-	cc.ch <- cc
+func (c *CommentChecker) stop(a article.Article) error {
+	log.WithFields(log.Fields{"board": a.Board, "code": a.Code}).Info("Article Deleted, Stop Tracking")
+	c.send(a, fmt.Sprintf("文章已刪除，停止追蹤推文@%s\n\n%s\n%s", a.Board, a.Title, a.Link))
+	accounts, err := article.Subscribers(a.Code)
+	if err != nil {
+		return err
+	}
+	for _, account := range accounts {
+		err := user.Update(account, func(u *user.User) error {
+			u.Subscribes.RemoveArticle(a.Code)
+			return nil
+		})
+		if err != nil {
+			return err
+		}
+	}
+	return article.Destroy(a.Code)
 }

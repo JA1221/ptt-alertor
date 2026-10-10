@@ -1,229 +1,221 @@
+// Package telegram is the telegram bot: receives updates by long polling one by one,
+// only allowed users can use it, and sends messages with retries
 package telegram
 
 import (
-	"encoding/json"
-	"io/ioutil"
+	"context"
+	"errors"
+	"fmt"
 	"net/http"
-	"os"
 	"regexp"
+	"strconv"
 	"strings"
+	"time"
 
 	log "github.com/Ptt-Alertor/logrus"
+	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api"
 
-	"strconv"
-
-	"github.com/Ptt-Alertor/ptt-alertor/command"
+	"github.com/Ptt-Alertor/ptt-alertor/health"
 	"github.com/Ptt-Alertor/ptt-alertor/myutil"
-	"github.com/go-telegram-bot-api/telegram-bot-api"
-	"github.com/julienschmidt/httprouter"
 )
 
-var (
-	bot   *tgbotapi.BotAPI
-	err   error
-	token = os.Getenv("TELEGRAM_TOKEN")
-	host  = os.Getenv("APP_HOST")
+const (
+	maxCharacters = 4096
+	sendRetries   = 3
+	pollTimeout   = 50
+	cancelData    = "CANCEL"
 )
 
-func init() {
-	if token == "" {
-		log.Warn("TELEGRAM_TOKEN Is Empty, Telegram Bot Disabled")
-		return
-	}
-	bot, err = tgbotapi.NewBotAPI(token)
-	if err != nil {
-		log.WithError(err).Fatal("Telegram Bot Initialize Failed")
-	}
-	// bot.Debug = true
-	log.Info("Telegram Authorized on " + bot.Self.UserName)
+// HandleFunc handles text from account in chat and returns reply
+type HandleFunc func(account string, chatID int64, text string) string
 
-	// telegram webhook requires public https host, use long polling otherwise (e.g. local)
-	if !strings.HasPrefix(host, "https://") {
-		go pollUpdates()
-		return
-	}
-
-	webhookConfig := tgbotapi.NewWebhook(host + "/telegram/" + token)
-	webhookConfig.MaxConnections = 100
-	_, err = bot.SetWebhook(webhookConfig)
-	if err != nil {
-		log.WithError(err).Fatal("Telegram Bot Set Webhook Failed")
-	}
-	log.Info("Telegram Bot Sets Webhook Success")
+// Bot is telegram bot
+type Bot struct {
+	api     *tgbotapi.BotAPI
+	token   string
+	allowed map[int64]bool
+	handle  HandleFunc
+	health  *health.Tracker
 }
 
-func pollUpdates() {
-	if _, err := bot.RemoveWebhook(); err != nil {
-		log.WithError(err).Fatal("Telegram Bot Remove Webhook Failed")
+// New connects telegram with token
+func New(token string, allowed []int64, handle HandleFunc, tracker *health.Tracker) (*Bot, error) {
+	client := &http.Client{Timeout: (pollTimeout + 30) * time.Second}
+	api, err := tgbotapi.NewBotAPIWithClient(token, client)
+	b := &Bot{
+		api:     api,
+		token:   token,
+		allowed: make(map[int64]bool),
+		handle:  handle,
+		health:  tracker,
 	}
-	u := tgbotapi.NewUpdate(0)
-	u.Timeout = 60
-	updates, err := bot.GetUpdatesChan(u)
 	if err != nil {
-		log.WithError(err).Fatal("Telegram Bot Get Updates Failed")
+		return nil, b.sanitize(err)
+	}
+	for _, id := range allowed {
+		b.allowed[id] = true
+	}
+	return b, nil
+}
+
+// UserName is bot's telegram user name
+func (b *Bot) UserName() string {
+	return b.api.Self.UserName
+}
+
+// sanitize removes token from error, request urls contain token
+func (b *Bot) sanitize(err error) error {
+	if err == nil || b.token == "" {
+		return err
+	}
+	return errors.New(strings.ReplaceAll(err.Error(), b.token, "<token>"))
+}
+
+// Run receives updates until ctx is done, updates are handled in order
+// so commands of the same user do not overwrite each other
+func (b *Bot) Run(ctx context.Context) {
+	if _, err := b.api.RemoveWebhook(); err != nil {
+		log.WithError(b.sanitize(err)).Warn("Telegram Remove Webhook Failed")
 	}
 	log.Info("Telegram Bot Starts Long Polling")
-	for update := range updates {
-		go func(update tgbotapi.Update) {
-			defer func() {
-				if r := recover(); r != nil {
-					log.WithField("panic", r).Error("Telegram Handle Update Panic")
-				}
-			}()
-			handleUpdate(update)
-		}(update)
-	}
-}
-
-// HandleRequest handles request from webhook
-func HandleRequest(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
-	bytes, err := ioutil.ReadAll(r.Body)
-	if err != nil {
-		log.WithError(err).Error("Telegram Read Request Body Failed")
-	}
-
-	var update tgbotapi.Update
-	json.Unmarshal(bytes, &update)
-	handleUpdate(update)
-}
-
-func handleUpdate(update tgbotapi.Update) {
-	if update.CallbackQuery != nil {
-		handleCallbackQuery(update)
-		return
-	}
-
-	if update.Message != nil {
-		if update.Message.IsCommand() {
-			handleCommand(update)
-			return
+	cfg := tgbotapi.NewUpdate(0)
+	cfg.Timeout = pollTimeout
+	for ctx.Err() == nil {
+		updates, err := b.api.GetUpdates(cfg)
+		err = b.sanitize(err)
+		b.health.TelegramPolled(err)
+		if err != nil {
+			log.WithError(err).Warn("Telegram Get Updates Failed")
+			select {
+			case <-ctx.Done():
+			case <-time.After(5 * time.Second):
+			}
+			continue
 		}
-		if update.Message.Text != "" {
-			handleText(update)
-			return
+		for _, update := range updates {
+			if update.UpdateID >= cfg.Offset {
+				cfg.Offset = update.UpdateID + 1
+			}
+			if ctx.Err() != nil {
+				return
+			}
+			b.handleUpdate(update)
 		}
 	}
 }
 
-func handleCallbackQuery(update tgbotapi.Update) {
-	var responseText string
-	userID := strconv.Itoa(update.CallbackQuery.From.ID)
-	switch update.CallbackQuery.Data {
-	case "CANCEL":
-		responseText = "取消"
-	default:
-		responseText = command.HandleCommand(update.CallbackQuery.Data, userID, true)
+func (b *Bot) handleUpdate(update tgbotapi.Update) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.WithField("panic", r).Error("Telegram Handle Update Panic")
+		}
+	}()
+	switch {
+	case update.CallbackQuery != nil:
+		b.handleCallback(update.CallbackQuery)
+	case update.Message != nil:
+		b.handleMessage(update.Message)
 	}
-	SendTextMessage(update.CallbackQuery.Message.Chat.ID, responseText)
 }
 
-// help - 所有指令清單
-// list - 設定清單
-// ranking - 熱門關鍵字、作者、推文數
-// add - 新增看板關鍵字、作者、推文數
-// del - 刪除看板關鍵字、作者、推文數
-// showkeyboard - 顯示快捷小鍵盤
-// hidekeyboard - 隱藏快捷小鍵盤
-func handleCommand(update tgbotapi.Update) {
-	var responseText string
-	userID := strconv.Itoa(update.Message.From.ID)
-	chatID := update.Message.Chat.ID
-
-	switch update.Message.Command() {
-	case "add", "del":
-		text := update.Message.Command() + " " + update.Message.CommandArguments()
-		responseText = command.HandleCommand(text, userID, true)
-	case "start":
-		command.HandleTelegramFollow(userID, chatID)
-		responseText = "歡迎使用 Ptt Alertor\n輸入「指令」查看相關功能。\n\n觀看Demo:\nhttps://media.giphy.com/media/3ohzdF6vidM6I49lQs/giphy.gif"
-	case "help":
-		responseText = command.HandleCommand("help", userID, true)
-	case "list":
-		responseText = command.HandleCommand("list", userID, true)
-	case "ranking":
-		responseText = command.HandleCommand("ranking", userID, true)
-	case "showkeyboard":
-		showReplyKeyboard(chatID)
-		return
-	case "hidekeyboard":
-		hideReplyKeyboard(chatID)
-		return
-	default:
-		responseText = "I don't know the command"
+func (b *Bot) permitted(from *tgbotapi.User, chatID int64) bool {
+	if from == nil {
+		return false
 	}
-	SendTextMessage(chatID, responseText)
+	if b.allowed[int64(from.ID)] {
+		return true
+	}
+	log.WithField("id", from.ID).Warn("Telegram User Not Allowed")
+	b.reply(chatID, fmt.Sprintf("這是私人 bot。\n你的 Telegram ID：%d\n要使用請將它加入 TELEGRAM_ALLOWED_IDS 後重新啟動。", from.ID))
+	return false
 }
 
-func handleText(update tgbotapi.Update) {
-	var responseText string
-	userID := strconv.Itoa(update.Message.From.ID)
-	chatID := update.Message.Chat.ID
-	text := update.Message.Text
-	if match, _ := regexp.MatchString("^(刪除|刪除作者)+\\s.*\\*+", text); match {
-		sendConfirmation(chatID, text)
+var deleteAllRe = regexp.MustCompile(`^刪除\s+\S+\s+\*$`)
+
+func (b *Bot) handleMessage(msg *tgbotapi.Message) {
+	text := strings.TrimSpace(msg.Text)
+	if text == "" || !b.permitted(msg.From, msg.Chat.ID) {
 		return
 	}
-	responseText = command.HandleCommand(text, userID, true)
-	SendTextMessage(chatID, responseText)
+	if msg.IsCommand() {
+		// "/list@bot args" -> "/list args"
+		text = strings.TrimSpace("/" + msg.Command() + " " + msg.CommandArguments())
+	}
+	if deleteAllRe.MatchString(text) {
+		b.confirm(msg.Chat.ID, text)
+		return
+	}
+	account := strconv.Itoa(msg.From.ID)
+	b.reply(msg.Chat.ID, b.handle(account, msg.Chat.ID, text))
 }
 
-func sendConfirmation(chatID int64, cmd string) {
-	markup := tgbotapi.NewInlineKeyboardMarkup(
+func (b *Bot) handleCallback(q *tgbotapi.CallbackQuery) {
+	if _, err := b.api.AnswerCallbackQuery(tgbotapi.NewCallback(q.ID, "")); err != nil {
+		log.WithError(b.sanitize(err)).Warn("Telegram Answer Callback Failed")
+	}
+	if q.Message == nil || !b.permitted(q.From, q.Message.Chat.ID) {
+		return
+	}
+	chatID := q.Message.Chat.ID
+	if q.Data == cancelData {
+		b.reply(chatID, "已取消。")
+		return
+	}
+	b.reply(chatID, b.handle(strconv.Itoa(q.From.ID), chatID, q.Data))
+}
+
+func (b *Bot) confirm(chatID int64, cmd string) {
+	msg := tgbotapi.NewMessage(chatID, "確定"+cmd+"？")
+	msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("是", cmd),
-			tgbotapi.NewInlineKeyboardButtonData("否", "CANCEL"),
+			tgbotapi.NewInlineKeyboardButtonData("否", cancelData),
 		))
-	msg := tgbotapi.NewMessage(chatID, "確定"+cmd+"？")
-	msg.ReplyMarkup = markup
-	_, err := bot.Send(msg)
-	if err != nil {
+	if err := b.send(msg); err != nil {
 		log.WithError(err).Error("Telegram Send Confirmation Failed")
 	}
 }
 
-const maxCharacters = 4096
-
-// SendTextMessage sends text message to chatID
-func SendTextMessage(chatID int64, text string) {
-	for _, msg := range myutil.SplitTextByLineBreak(text, maxCharacters) {
-		sendTextMessage(chatID, msg)
+func (b *Bot) reply(chatID int64, text string) {
+	if err := b.Send(chatID, text); err != nil {
+		log.WithError(err).WithField("chat", chatID).Error("Telegram Reply Failed")
 	}
 }
 
-func sendTextMessage(chatID int64, text string) {
-	if bot == nil {
-		log.Warn("Telegram Bot Disabled, Message Not Sent")
-		return
+// Send sends text to chat, long text is split by line breaks
+func (b *Bot) Send(chatID int64, text string) error {
+	for _, part := range myutil.SplitTextByLineBreak(text, maxCharacters) {
+		msg := tgbotapi.NewMessage(chatID, part)
+		msg.DisableWebPagePreview = true
+		if err := b.send(msg); err != nil {
+			return err
+		}
 	}
-	msg := tgbotapi.NewMessage(chatID, text)
-	msg.DisableWebPagePreview = true
-	_, err := bot.Send(msg)
-	if err != nil {
-		log.WithError(err).Error("Telegram Send Message Failed")
-	}
+	return nil
 }
 
-func showReplyKeyboard(chatID int64) {
-	keyboard := tgbotapi.NewReplyKeyboard(
-		tgbotapi.NewKeyboardButtonRow(
-			tgbotapi.NewKeyboardButton("清單"),
-			tgbotapi.NewKeyboardButton("推文清單"),
-			tgbotapi.NewKeyboardButton("排行"),
-			tgbotapi.NewKeyboardButton("指令"),
-		))
-	msg := tgbotapi.NewMessage(chatID, "顯示小鍵盤")
-	msg.ReplyMarkup = keyboard
-	_, err := bot.Send(msg)
-	if err != nil {
-		log.WithError(err).Error("Telegram Show Reply Keyboard Failed")
+// send retries on network errors and rate limits (waits retry_after),
+// other errors from telegram (e.g. bot blocked) are not retried
+func (b *Bot) send(msg tgbotapi.Chattable) error {
+	var err error
+	for attempt := 0; attempt <= sendRetries; attempt++ {
+		if _, err = b.api.Send(msg); err == nil {
+			b.health.TelegramSent(nil)
+			return nil
+		}
+		wait := time.Duration(1<<attempt) * time.Second
+		if apiErr, ok := err.(tgbotapi.Error); ok {
+			if apiErr.RetryAfter <= 0 {
+				break
+			}
+			wait = time.Duration(apiErr.RetryAfter) * time.Second
+		}
+		if attempt < sendRetries {
+			log.WithError(b.sanitize(err)).WithField("wait", wait).Warn("Telegram Send Failed, Retry")
+			time.Sleep(wait)
+		}
 	}
-}
-
-func hideReplyKeyboard(chatID int64) {
-	msg := tgbotapi.NewMessage(chatID, "隱藏小鍵盤")
-	msg.ReplyMarkup = tgbotapi.NewRemoveKeyboard(true)
-	_, err := bot.Send(msg)
-	if err != nil {
-		log.WithError(err).Error("Telegram Hide Reply Keyboard Failed")
-	}
+	err = b.sanitize(err)
+	b.health.TelegramSent(err)
+	return err
 }
