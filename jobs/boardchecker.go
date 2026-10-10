@@ -140,5 +140,5 @@ func ArticlesMessage(boardName string, keywords []string, articles article.Artic
 	for _, a := range articles {
 		lines = append(lines, notify.Link(a.Title, a.Link))
 	}
-	return notify.Message{Text: strings.Join(lines, "\n"), Buttons: command.ArticlesButtons(boardName, articles)}
+	return notify.Message{Text: strings.Join(lines, "\n"), Buttons: command.ArticlesButtons(boardName)}
 }

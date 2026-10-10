@@ -1,33 +1,15 @@
 package command
 
 import (
-	"github.com/Ptt-Alertor/ptt-alertor/models/article"
 	"github.com/Ptt-Alertor/ptt-alertor/notify"
 )
 
-// maxTrackButtons limits articles of a notification offering tracking comments
-const maxTrackButtons = 3
-
-// ArticlesButtons are buttons of a keyword notification: tracking comments of the articles,
-// and managing keywords of the board
-func ArticlesButtons(boardName string, articles article.Articles) [][]notify.Button {
-	var rows [][]notify.Button
-	for _, a := range articles {
-		if len(rows) == maxTrackButtons {
-			break
-		}
-		args := articleURLRe.FindStringSubmatch(a.Link)
-		if args == nil {
-			continue
-		}
-		if data := cbTrackToast + args[1] + "|" + args[2]; len(data) <= callbackLimit {
-			rows = append(rows, []notify.Button{button("💬 追蹤推文："+truncate(a.Title, 24), data)})
-		}
-	}
+// ArticlesButtons are buttons of a keyword notification, one row to keep it compact
+func ArticlesButtons(boardName string) [][]notify.Button {
 	if data := cbBoardMessage + boardName; len(data) <= callbackLimit {
-		rows = append(rows, []notify.Button{button("⚙️ 管理 "+boardName+" 關鍵字", data)})
+		return buttonRow(button("⚙️ 管理 "+boardName+" 關鍵字", data))
 	}
-	return rows
+	return nil
 }
 
 // CommentsButtons are buttons of a comment notification

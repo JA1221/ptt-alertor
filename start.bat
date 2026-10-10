@@ -43,6 +43,13 @@ for /l %%i in (1,1,30) do (
   curl -fs %URL%/healthz >nul 2>nul && goto ready
   timeout /t 2 /nobreak >nul
 )
+echo.
+echo 服務還沒準備好，可能還在啟動中。請等一分鐘後用瀏覽器打開 %URL%
+echo 一直打不開的話，執行 docker compose logs app 查看原因。
+call :autostart
+pause
+exit /b 1
+
 :ready
 start "" %URL%
 echo.

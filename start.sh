@@ -32,8 +32,13 @@ echo "等待服務就緒..."
 port=$(docker compose port app 9090 2>/dev/null | sed 's/.*://')
 url=http://localhost:${port:-9090}
 i=0
-until curl -fs "$url/healthz" >/dev/null 2>&1 || [ $i -ge 30 ]; do
+until curl -fs "$url/healthz" >/dev/null 2>&1; do
   i=$((i + 1))
+  if [ $i -gt 30 ]; then
+    echo "服務還沒準備好，可能還在啟動中。請等一分鐘後用瀏覽器打開 $url"
+    echo "一直打不開的話，執行 docker compose logs app 查看原因。"
+    exit 1
+  fi
   sleep 2
 done
 

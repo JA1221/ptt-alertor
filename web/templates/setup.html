@@ -2,12 +2,10 @@
 <html lang="zh-Hant">
 <head>
 {{template "head"}}
-{{if and (eq .Step 2) (not .ClaimLink)}}<meta http-equiv="refresh" content="3">{{end}}
-{{if .ClaimLink}}<meta http-equiv="refresh" content="10">{{end}}
 <title>Ptt Alertor 設定</title>
 </head>
 <body>
-<main class="narrow">
+<main class="narrow" data-page="setup" data-refresh="{{if eq .Step 2}}{{if .ClaimLink}}5{{else}}3{{end}}{{end}}">
   <h1>Ptt Alertor 設定</h1>
   <div class="muted">兩個步驟就能開始使用</div>
 
@@ -25,7 +23,7 @@
       <li>BotFather 會回覆一串 token，例如 <code>123456789:AAH...</code>，複製貼到下面</li>
     </ol>
     {{if .Error}}<div class="banner bad">{{.Error}}</div>{{end}}
-    <form method="post" action="/setup/token">
+    <form method="post" action="/setup/token" data-native>
       <input type="text" name="token" placeholder="貼上 token" autocomplete="off" required autofocus>
       <button class="button" type="submit">下一步</button>
     </form>
@@ -46,5 +44,6 @@
   </div>
   {{end}}
 </main>
+{{template "live"}}
 </body>
 </html>

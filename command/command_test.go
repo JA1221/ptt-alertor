@@ -604,20 +604,12 @@ func TestKeyboardButtonsAreCommands(t *testing.T) {
 func TestNotificationButtons(t *testing.T) {
 	h, _ := setup(t)
 	say(h, "1", "新增 stock a")
-	articles := article.Articles{
-		{Title: "a1", Link: "https://www.ptt.cc/bbs/Stock/M.1.A.1.html"},
-		{Title: "deleted"},
-		{Title: "a2", Link: "https://www.ptt.cc/bbs/Stock/M.2.A.2.html"},
-		{Title: "a3", Link: "https://www.ptt.cc/bbs/Stock/M.3.A.3.html"},
-		{Title: "a4", Link: "https://www.ptt.cc/bbs/Stock/M.4.A.4.html"},
-	}
-	buttons := ArticlesButtons("stock", articles)
-	msg := notify.Message{Buttons: buttons}
-	if len(buttons) != 4 || !hasButton(msg, "tt|Stock|M.1.A.1") || hasButton(msg, "tt|Stock|M.4.A.4") || !hasButton(msg, "bm|stock") {
+	// one row keeps notifications compact
+	if buttons := ArticlesButtons("stock"); len(buttons) != 1 || !hasButton(notify.Message{Buttons: buttons}, "bm|stock") {
 		t.Fatalf("buttons = %+v", buttons)
 	}
 
-	// notification buttons pop up results and keep the notification
+	// track buttons of notifications sent by older versions pop up results and keep the notification
 	got := press(h, "1", "tt|Stock|M.1.A.1")
 	if got.Text != "" || !strings.HasPrefix(got.Toast, "✅ 開始追蹤推文") || !strings.Contains(got.Toast, "標題<b>") {
 		t.Errorf("track = %+v", got)

@@ -5,9 +5,9 @@
 <title>Ptt Alertor</title>
 </head>
 <body>
-<main>
+<main data-page="status" data-refresh="30">
   <h1>Ptt Alertor</h1>
-  <div class="muted">已執行 {{duration (since .Now .Started)}} · 更新於 {{clock .Now}} · 沒在操作時每 30 秒自動更新</div>
+  <div class="muted">已執行 {{duration (since .Now .Started)}} · 更新於 {{clock .Now}} · 每 30 秒自動更新</div>
 
   {{if .OK}}<div class="banner ok flash">✅ {{.OK}}</div>{{end}}
   {{if .Error}}<div class="banner bad flash">❌ {{.Error}}</div>{{end}}
@@ -84,7 +84,7 @@
           <span class="muted">{{if ne .Name .Account}}{{.Account}} · {{end}}推文追蹤 {{.Articles}} 篇</span>
         </div>
         {{if not .Admin}}
-        <form method="post" action="/members/remove" onsubmit="return confirm('確定移除 {{.Name}}？對方將無法再使用 bot。')">
+        <form method="post" action="/members/remove" data-confirm="確定移除 {{.Name}}？對方將無法再使用 bot。">
           <input type="hidden" name="account" value="{{.Account}}"><button class="button small secondary">移除</button>
         </form>
         {{end}}
@@ -156,7 +156,7 @@
     <div class="row">
       <a class="button small" href="/backup">⬇️ 下載備份</a>
       <form method="post" action="/restore" enctype="multipart/form-data" class="row"
-            onsubmit="return confirm('確定用這個備份還原？目前的資料會被覆蓋。')">
+            data-confirm="確定用這個備份還原？目前的資料會被覆蓋。">
         <input type="file" name="file" accept=".json,application/json" required>
         <button class="button small secondary">還原</button>
       </form>
@@ -166,14 +166,6 @@
 
   <div class="muted">版本 {{.Version}} · 健康檢查：<a href="/health">/health</a> · <a href="https://github.com/JA1221/ptt-alertor/releases" target="_blank" rel="noopener">更新紀錄</a></div>
 </main>
-<script>
-  // refresh status, but not while typing or choosing a file
-  setInterval(function () {
-    var busy = Array.prototype.some.call(document.querySelectorAll('input[type=text], input[type=file]'), function (el) {
-      return el.value !== '' || el === document.activeElement;
-    });
-    if (!busy) location.replace('/' + location.hash);
-  }, 30000);
-</script>
+{{template "live"}}
 </body>
 </html>

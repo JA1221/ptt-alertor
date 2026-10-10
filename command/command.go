@@ -43,6 +43,7 @@ const (
 	cbBoardView     = "bv|"
 	cbDeleteBoard   = "db|"
 	// buttons of notifications, they must not replace the notification
+	// tracking buttons were on notifications of v1.2.0, they still work
 	cbTrackToast   = "tt|"
 	cbUntrackToast = "ut|"
 	cbBoardMessage = "bm|"
