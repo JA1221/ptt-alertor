@@ -10,8 +10,8 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
-ARG TARGETOS TARGETARCH
-RUN GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w" -o /ptt-alertor .
+ARG TARGETOS TARGETARCH VERSION=dev
+RUN GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w -X main.version=$VERSION" -o /ptt-alertor .
 
 # about 15MB: the binary with embedded time zones, and certificates
 FROM scratch

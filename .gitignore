@@ -12,3 +12,6 @@ coverage.txt
 # editors
 .vscode/
 .idea/
+
+# backups contain bot token
+backups/

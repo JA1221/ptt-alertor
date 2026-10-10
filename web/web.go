@@ -37,7 +37,8 @@ var pages = template.Must(template.New("").Funcs(funcs).ParseFS(templates, "temp
 
 // Server serves pages
 type Server struct {
-	Health *health.Tracker
+	Health  *health.Tracker
+	Version string
 	// HasToken reports telegram token is configured
 	HasToken func() bool
 	// SaveToken verifies and saves telegram token, returns bot user name
@@ -150,6 +151,7 @@ type member struct {
 
 type statusPage struct {
 	health.Snapshot
+	Version       string
 	Members       []member
 	Pending       int
 	Mode          string
@@ -159,6 +161,7 @@ type statusPage struct {
 func (s *Server) status(w http.ResponseWriter, bot string) {
 	page := statusPage{
 		Snapshot:      s.Health.Snapshot(),
+		Version:       s.Version,
 		Notifications: health.Recent(),
 	}
 	accounts, _ := access.Members()
@@ -197,11 +200,13 @@ func (s *Server) healthCheck(w http.ResponseWriter, r *http.Request) {
 		Problems []string `json:"problems"`
 		Boards   int      `json:"boards"`
 		Started  string   `json:"started"`
+		Version  string   `json:"version"`
 	}{
 		Healthy:  snap.Healthy(),
 		Problems: snap.Problems,
 		Boards:   len(snap.Boards),
 		Started:  snap.Started.Format(time.RFC3339),
+		Version:  s.Version,
 	}
 	if body.Problems == nil {
 		body.Problems = []string{}

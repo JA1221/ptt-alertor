@@ -15,6 +15,7 @@ import (
 
 	log "github.com/Ptt-Alertor/logrus"
 
+	"github.com/Ptt-Alertor/ptt-alertor/backup"
 	"github.com/Ptt-Alertor/ptt-alertor/channels/telegram"
 	"github.com/Ptt-Alertor/ptt-alertor/command"
 	"github.com/Ptt-Alertor/ptt-alertor/config"
@@ -28,15 +29,24 @@ import (
 	"github.com/Ptt-Alertor/ptt-alertor/web"
 )
 
+// version is set when building image
+var version = "dev"
+
 func main() {
 	cfg, err := config.Load()
 	if err != nil {
 		log.WithError(err).Fatal("Config Invalid")
 	}
-	// docker healthcheck, the image has no shell or curl
-	if len(os.Args) > 1 && os.Args[1] == "healthcheck" {
-		os.Exit(healthcheck(cfg.HTTPAddr))
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		// docker healthcheck, the image has no shell or curl
+		case "healthcheck":
+			os.Exit(healthcheck(cfg.HTTPAddr))
+		case "backup", "restore":
+			os.Exit(runBackup(os.Args[1]))
+		}
 	}
+	log.WithField("version", version).Info("Ptt Alertor Start")
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -61,6 +71,7 @@ func main() {
 		Addr: cfg.HTTPAddr,
 		Handler: (&web.Server{
 			Health:   tracker,
+			Version:  version,
 			HasToken: hasToken,
 			SaveToken: func(token string) (string, error) {
 				name, err := telegram.Verify(token)
@@ -241,5 +252,29 @@ func healthcheck(addr string) int {
 	if resp.StatusCode != http.StatusOK {
 		return 1
 	}
+	return 0
+}
+
+// runBackup exports all data to stdout (backup) or replaces it from stdin (restore)
+func runBackup(cmd string) int {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if !waitRedis(ctx) {
+		fmt.Fprintln(os.Stderr, "Redis 無法連線")
+		return 1
+	}
+	if cmd == "backup" {
+		if err := backup.Export(os.Stdout); err != nil {
+			fmt.Fprintln(os.Stderr, "備份失敗：", err)
+			return 1
+		}
+		return 0
+	}
+	n, err := backup.Import(os.Stdin)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "還原失敗，資料沒有變更：", err)
+		return 1
+	}
+	fmt.Fprintf(os.Stderr, "已還原 %d 筆資料，請重新啟動 app\n", n)
 	return 0
 }

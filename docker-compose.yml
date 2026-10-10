@@ -4,8 +4,8 @@ name: ptt-alertor
 
 services:
   app:
-    # prebuilt image, built from source when it can not be pulled
-    image: ghcr.io/ja1221/ptt-alertor:latest
+    # prebuilt image of the latest 1.x release, built from source when it can not be pulled
+    image: ghcr.io/ja1221/ptt-alertor:1
     build: .
     restart: unless-stopped
     depends_on:

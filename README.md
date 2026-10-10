@@ -17,7 +17,7 @@ PTT 關鍵字通知 Telegram bot。自己架、分享給朋友用，不用寫程
 
 **2. 下載並啟動**
 
-按這個頁面上方綠色的 **Code → Download ZIP**，解壓縮後：
+到 [Releases](https://github.com/JA1221/ptt-alertor/releases/latest) 下載最新版的 **Source code (zip)**，解壓縮後：
 
 - Windows：雙擊 `start.bat`
 - macOS / Linux：在資料夾開終端機執行 `./start.sh`
@@ -63,11 +63,13 @@ PTT 關鍵字通知 Telegram bot。自己架、分享給朋友用，不用寫程
 
 ## 常見問題
 
-**更新到最新版？** 再執行一次 `start.bat` / `start.sh`。
+**更新到最新版？** 再執行一次 `start.bat` / `start.sh`，會自動下載最新的 1.x 版（不會跨到可能不相容的 2.x）。目前版本顯示在狀態頁最下方，改了什麼看 [Releases](https://github.com/JA1221/ptt-alertor/releases)。
+
+**備份與還原？** 雙擊 `backup.bat`（macOS / Linux：`./backup.sh`），資料會存到 `backups` 資料夾。還原時把備份檔拖曳到 `backup.bat` 上（`./backup.sh 備份檔`），還原前會先自動備份目前的資料。備份檔裡可能有 bot token，不要分享給別人。
 
 **停止？** 執行 `stop.bat`，或 `docker compose stop`。資料會保留。
 
-**資料存在哪？** Docker volume `ptt-alertor_redis-data`。`docker compose down -v` 會全部清除。
+**資料存在哪？** Docker volume `ptt-alertor_redis-data`。`docker compose down -v` 會全部清除，換電腦或重灌前記得先備份。
 
 **換 bot token？** 在 `.env` 設定 `TELEGRAM_TOKEN=新token` 後重新執行 start；或在 BotFather 撤銷舊 token，程式會自動回到設定頁。
 
@@ -97,11 +99,12 @@ docker compose up -d --build          # 用本機程式碼建置並啟動
 docker run --rm -v "$PWD:/src" -w /src golang:1.23 go test -race -short ./...
 ```
 
-推送到 `master` 時，GitHub Actions 會跑測試並建置 amd64/arm64 映像檔到 `ghcr.io/<owner>/<repo>`。
+推送到 `master` 時，GitHub Actions 會跑測試並建置 amd64/arm64 映像檔到 `ghcr.io/<owner>/<repo>:latest`。推送 `v1.2.3` 這類 tag 會發布 `1.2.3`、`1.2`、`1` 版本，`docker-compose.yml` 使用 `1`。
 
 ```
-main.go               設定、組裝、HTTP server、優雅關閉
+main.go               設定、組裝、HTTP server、優雅關閉、healthcheck/backup/restore 子指令
 config/               環境變數
+backup/               全部資料匯出成 JSON 與還原
 connections/          Redis 連線池
 ptt/{http,rss,web}    PTT 抓取與解析
 models/               文章、看板、關鍵字索引、訂閱、使用者、權限（Redis）
